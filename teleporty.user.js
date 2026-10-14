@@ -9,9 +9,9 @@
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js
 // @downloadURL  https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js
-// @require      https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.core.js?v=0.1.2
-// @resource     tp_css https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.css?v=0.1.2
-// @resource     tp_icon https://raw.githubusercontent.com/Doiua97/teleport-queue/main/assets/widget.png?v=0.1.2
+// @require      https://raw.githubusercontent.com/Doiua97/teleport-queue/fbc56a0c2313a89edc8114cecf80b36bc9cf3598/teleporty.core.js?v=0.1.2
+// @resource     tp_css https://raw.githubusercontent.com/Doiua97/teleport-queue/fbc56a0c2313a89edc8114cecf80b36bc9cf3598/teleporty.css?v=0.1.2
+// @resource     tp_icon https://raw.githubusercontent.com/Doiua97/teleport-queue/fbc56a0c2313a89edc8114cecf80b36bc9cf3598/assets/widget.png?v=0.1.2
 // @grant        unsafeWindow
 // @grant        GM_getResourceText
 // @grant        GM_getResourceURL

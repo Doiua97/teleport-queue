@@ -163,3 +163,7 @@ Nie zainstalowano dodatku na rzeczywistej postaci. Poniższe zachowania **nie zo
 9. Układy klawiatury i systemowe kombinacje Ctrl/Alt/Meta, rzeczywiste zmiany skrótów klienta po zapisie, przechwytywanie podczas aktywnych stanów gry.
 
 Wersja lokalna 0.1.2 jest przygotowana do tych sprawdzeń. Lokalnych wyników nie należy przedstawiać jako potwierdzenia teleportacji na serwerze.
+
+## Publikacja
+
+Na polecenie użytkownika wysłano zmiany na `main`. Podczas kontroli publicznych adresów core i CSS z `main?v=0.1.2` chwilowo zwracały wcześniejszą zawartość. Adresy `@require` i `@resource` przypięto więc do commita `fbc56a0c2313a89edc8114cecf80b36bc9cf3598` zawierającego komplet 0.1.2, zachowując oznaczenie `?v=0.1.2`. Adresy aktualizacji loadera nadal wskazują `main`. Zmiana dotyczy wyłącznie pobierania zasobów; logika dodatku pozostaje taka, jak w lokalnych testach.

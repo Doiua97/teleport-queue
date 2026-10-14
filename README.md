@@ -60,4 +60,4 @@ Test przeglądarkowy wymaga Playwright dostępnego dla Node (np. przez `NODE_PAT
 
 Opcjonalne `TP_NATIVE_ASSET_ORIGIN` pozwala pobrać publiczne grafiki `/img/`, a `TP_SCREENSHOT` zapisać podglądy PNG. Pobierane są wyłącznie grafiki, bez logowania i żądań użycia przedmiotów.
 
-Schemat danych ma numer 2, a klucz `margo-tp:v2:<world>:<characterId>`. Aktualizując loader, zmień `@version` i `?v=` zasobów. Adresy wskazują repozytorium `Doiua97/teleport-queue`, gałąź `main`.
+Schemat danych ma numer 2, a klucz `margo-tp:v2:<world>:<characterId>`. Aktualizując loader, zmień `@version`, `?v=` oraz commit zasobów. Loader aktualizuje się z gałęzi `main`, a core, CSS i ikona są przypięte do konkretnego commita wydania w `Doiua97/teleport-queue`, aby pobrać zgodny komplet plików.
