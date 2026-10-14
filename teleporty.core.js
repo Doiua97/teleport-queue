@@ -4,6 +4,8 @@
     const SIZE = 60;
     const VIEW = 'TP_QUEUE_VIEW';
     const WIDGET = 'tp_queue';
+    const LOAD_LOCKS = new Set(['change_location', 'mapLoadedAndAllInit']);
+    const MODIFIERS = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']);
     const defaults = () => ({
         start: 1, auto: false, interval: 120,
         manualKey: { code: 'F9', ctrl: false, alt: false, shift: false, meta: false },
@@ -13,17 +15,66 @@
     });
     const integer = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
     const keyValid = key => key === null || (key && typeof key.code === 'string' && /^[A-Za-z][A-Za-z0-9]*$/.test(key.code)
+        && key.code !== 'Unidentified' && !MODIFIERS.has(key.code)
         && ['ctrl', 'alt', 'shift', 'meta'].every(name => typeof key[name] === 'boolean'));
     const sameKey = (a, b) => Boolean(a && b && ['code', 'ctrl', 'alt', 'shift', 'meta'].every(k => a[k] === b[k]));
-    const keyOf = e => ({ code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey });
+    const keyOf = e => ({ code: e.code, key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey });
     const keyText = key => key ? [key.ctrl && 'Ctrl', key.alt && 'Alt', key.shift && 'Shift', key.meta && 'Meta',
         key.code.replace(/^Key/, '').replace(/^Digit/, '')].filter(Boolean).join(' + ') : 'Brak';
-    const profileKey = e => `margo-tp:v1:${e.worldConfig.getWorldName()}:${e.hero.d.id}`;
+    const profileKey = e => `margo-tp:v2:${e.worldConfig.getWorldName()}:${e.hero.d.id}`;
     const stats = item => item.parseStats();
     const teleport = item => Boolean(item && Number(item.cl) === 32 &&
         ['teleport', 'custom_teleport'].some(k => Object.hasOwn(stats(item), k)));
     const identity = item => ({ id: String(item.id), hid: String(item.hid) });
     const matches = (item, ref) => Boolean(item && ref && String(item.id) === ref.id && String(item.hid) === ref.hid);
+    const groupOf = item => ({ items: [identity(item)] });
+    const quantity = item => Math.max(0, Number(stats(item).amount) || 0);
+    function groupKey(item) {
+        const s = stats(item);
+        if (!teleport(item) || !Object.hasOwn(s, 'amount') || item.tpl == null) return null;
+        const fields = Object.keys(s).filter(k => k !== 'amount').sort().map(k =>
+            [k, k === 'timelimit' ? String(s[k]).split(',')[0] : s[k]]);
+        return JSON.stringify([Number(item.cl), String(item.tpl), fields]);
+    }
+    function destination(item) {
+        if (needsTarget(item)) return 'wybór miejsca';
+        const s = stats(item);
+        const value = s.custom_teleport || s.teleport;
+        return String(value ?? '').split(',').slice(3).join(',').trim() || 'nieznana lokacja';
+    }
+    function nativeKey(key, event) {
+        const observed = event?.key || key?.key;
+        if (observed) return observed.toUpperCase();
+        const code = key?.code || '';
+        if (code.startsWith('Key')) return code.slice(3);
+        if (code.startsWith('Digit')) return key.shift ? ')!@#$%^&*('[Number(code.slice(5))] : code.slice(5);
+        if (code.startsWith('Numpad') && /\d$/.test(code)) return code.slice(6);
+        const symbols = { Space: ' ', Backquote: ['`', '~'], Minus: ['-', '_'], Equal: ['=', '+'],
+            BracketLeft: ['[', '{'], BracketRight: [']', '}'], Backslash: ['\\', '|'],
+            Semicolon: [';', ':'], Quote: ["'", '"'], Comma: [',', '<'], Period: ['.', '>'], Slash: ['/', '?'] };
+        const value = symbols[code];
+        return Array.isArray(value) ? value[key.shift ? 1 : 0] : value || code.toUpperCase();
+    }
+    function gameConflict(key, engine, event) {
+        if (!key) return null;
+        const value = nativeKey(key, event);
+        if (['ENTER', 'ESCAPE', 'TAB', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(value)
+            || /^[1-9]$/.test(value)) return 'Ten skrót jest już używany przez Margonem.';
+        const hot = engine.hotKeys;
+        if (!hot) return 'Nie można teraz sprawdzić skrótów Margonem. Poczekaj na załadowanie gry.';
+        const moves = ['move_up', 'move_down', 'move_left', 'move_right'];
+        if (moves.some(name => String(hot.getKeyByClbName?.(name) || '').toUpperCase() === value))
+            return 'Ten skrót jest już używany przez Margonem. Ruch postaci.';
+        // InputParser processes movement and reserved keys with modifiers, but skips general hotkeys with Ctrl.
+        if (key.ctrl) return null;
+        const rows = hot.getSortedHotKeys?.() || [];
+        const row = rows.find(row => String(row[0] || '').toUpperCase() === value);
+        const clb = hot.hotKeys?.[value] || row?.[1];
+        if (!clb) return null;
+        const icon = row?.[2];
+        const label = icon && engine.widgetManager.getDefaultWidgetSet()?.[icon]?.txt;
+        return `Ten skrót jest już używany przez Margonem.${label ? ` ${label}` : ''}`;
+    }
     const cooldown = (item, now = Date.now() / 1000) => {
         const value = stats(item).timelimit;
         if (value == null) return 0;
@@ -41,7 +92,7 @@
         && !item.$.hasClass('disable-item-mark');
     const advance = (slot, start) => slot < start || slot >= SIZE ? start : slot + 1;
     function load(value) {
-        if (value != null && value.schema !== 1) throw new Error('Nieobsługiwana wersja zapisu. Twoje dane pozostają zachowane.');
+        if (value != null && value.schema !== 2) throw new Error('Nieobsługiwana wersja zapisu. Twoje dane pozostają zachowane.');
         const config = defaults();
         const input = value?.config ?? {};
         for (const k of ['auto', 'replaceLock', 'menu', 'doubleClick']) if (typeof input[k] === 'boolean') config[k] = input[k];
@@ -52,15 +103,19 @@
         if (sameKey(config.manualKey, config.autoKey)) config.autoKey = null;
         const seen = new Set();
         const slots = Array.from({ length: SIZE }, (_, i) => {
-            const ref = value?.slots?.[i];
-            if (!ref || !['id', 'hid'].every(k => ['number', 'string'].includes(typeof ref[k])
-                && String(ref[k]).length && !['undefined', 'null'].includes(String(ref[k])))) return null;
-            const id = String(ref.id);
-            if (seen.has(id)) return null;
-            seen.add(id);
-            return { id, hid: String(ref.hid) };
+            const refs = value?.slots?.[i]?.items;
+            if (!Array.isArray(refs)) return null;
+            const items = refs.flatMap(ref => {
+                if (!ref || !['id', 'hid'].every(k => ['number', 'string'].includes(typeof ref[k])
+                    && String(ref[k]).length && !['undefined', 'null'].includes(String(ref[k])))) return [];
+                const id = String(ref.id);
+                if (seen.has(id)) return [];
+                seen.add(id);
+                return [{ id, hid: String(ref.hid) }];
+            });
+            return items.length ? { items } : null;
         });
-        return { schema: 1, config, slots,
+        return { schema: 2, config, slots, locked: Array.from({ length: SIZE }, (_, i) => value?.locked?.[i] === true),
             next: integer(value?.next, config.start, SIZE) ? value.next : config.start,
             last: integer(value?.last, 1, SIZE) ? value.last : null,
             state: config.auto && ['active', 'paused'].includes(value?.state) ? 'paused' : 'off',
@@ -76,9 +131,10 @@
             this.flight = null;
             this.epoch = 0;
             this.alive = true;
+            this.waiting = false;
         }
         change() { this.a.save(this.p); this.a.render(); }
-        clear() { if (this.timer !== null) this.clock.clearTimeout(this.timer); this.timer = null; }
+        clear() { if (this.timer !== null) this.clock.clearTimeout(this.timer); this.timer = null; this.waiting = false; }
         pause(reason) {
             if (this.p.state === 'off') return;
             this.clear();
@@ -110,11 +166,36 @@
             return this.attempt();
         }
         async manual(slot) {
-            if (this.p.state !== 'off') return;
+            if (this.p.state !== 'off' || (slot && this.p.locked[slot - 1])) return;
             return this.attempt(slot);
+        }
+        find(explicit, clean = false) {
+            let slot = explicit ?? this.p.next;
+            const limit = explicit ? 1 : SIZE - this.p.config.start + 1;
+            let removed = false, candidate = null;
+            for (let i = 0; i < limit; i++) {
+                const group = this.p.slots[slot - 1];
+                if (group) {
+                    const items = this.a.items(group);
+                    if (clean) {
+                        const refs = group.items.filter(ref => items.some(item => matches(item, ref)));
+                        if (refs.length !== group.items.length) {
+                            this.p.slots[slot - 1] = refs.length ? { items: refs } : null; removed = true;
+                        }
+                    }
+                    if (!this.p.locked[slot - 1]) {
+                        const item = items.find(item => this.a.ready(item));
+                        if (item) { candidate = { item, slot }; break; }
+                    }
+                }
+                slot = advance(slot, this.p.config.start);
+            }
+            if (removed) this.change();
+            return candidate;
         }
         async attempt(explicit) {
             if (!this.alive || this.flight || !this.a.context()) return;
+            if (explicit && this.p.locked[explicit - 1]) return;
             this.clear();
             if (!this.p.slots.some(Boolean)) {
                 this.a.message('Brak teleportów w kolejce.');
@@ -122,20 +203,7 @@
                 return;
             }
             if (this.a.loaded && !this.a.loaded()) { this.schedule(); return; }
-            let candidate = null;
-            let removed = false;
-            let slot = explicit ?? this.p.next;
-            const limit = explicit ? 1 : SIZE - this.p.config.start + 1;
-            for (let i = 0; i < limit; i++) {
-                const ref = this.p.slots[slot - 1];
-                if (ref) {
-                    const item = this.a.item(ref);
-                    if (!item) { this.p.slots[slot - 1] = null; removed = true; }
-                    else if (this.a.ready(item)) { candidate = { item, slot }; break; }
-                }
-                slot = advance(slot, this.p.config.start);
-            }
-            if (removed) this.change();
+            const candidate = this.find(explicit, true);
             if (!candidate) {
                 this.a.message(this.p.slots.some(Boolean) ? 'Brak gotowego teleportu.' : 'Brak teleportów w kolejce.');
                 this.schedule();
@@ -181,7 +249,16 @@
         }
         schedule() {
             if (!this.alive || this.p.state !== 'active' || this.flight) return;
+            this.clear();
+            if (this.a.loaded && !this.a.loaded()) { this.waiting = true; this.a.render(); return; }
             this.timer = this.clock.setTimeout(() => { this.timer = null; void this.attempt(); }, this.p.config.interval * 1000);
+        }
+        wait() {
+            if (this.p.state !== 'active') return;
+            this.clear(); this.waiting = true; this.a.render();
+        }
+        ready() {
+            if (this.waiting && !this.flight && (!this.a.loaded || this.a.loaded())) this.schedule();
         }
         release(flight) {
             if (this.flight === flight) { this.flight = null; this.a.render(); }
@@ -225,16 +302,16 @@
             this.views = new Map();
             this.items = new Map();
             this.held = new Set();
+            this.captureReleases = new Set();
             this.capture = null;
             this.syncTimer = null;
             this.operation = null;
-            this.ownTravel = 0;
             this.widgetSaving = false;
             this.dead = false;
             this.q = new Queue(this.p, {
-                context: () => this.context(), blocked: () => this.blocked(), item: ref => this.item(ref),
+                context: () => this.context(), blocked: () => this.blocked(), items: group => this.members(group),
                 ready: item => this.available(item), use: item => this.use(item),
-                loaded: () => this.e.allInit && !this.e.reload,
+                loaded: () => this.loaded(),
                 save: () => this.save(), render: () => this.render(), message: text => this.message(text)
             }, this.win);
         }
@@ -258,21 +335,27 @@
             const item = this.e.items.getItemById(ref.id);
             return matches(item, ref) && this.e.heroEquipment.getHItems()[ref.id] === item && teleport(item) ? item : null;
         }
+        members(group) { return group?.items?.map(ref => this.item(ref)).filter(Boolean) || []; }
+        loaded() {
+            const e = this.e, map = e.map;
+            return Boolean(e.allInit && !e.reload && ![...LOAD_LOCKS].some(name => e.lock.check(name))
+                && (!map?.lock || !map.lock.check().length)
+                && (!map?.getDrawable || map.getDrawable()) && (!map?.getUnlock || map.getUnlock()));
+        }
         available(item) {
             const manager = this.e.disableItemsManager;
             return readyItem(item) && !(manager && manager.checkRequires(item, manager.activeDisableKinds));
         }
         blocked() {
             const e = this.e;
-            if (e.hero.d.hp <= 0 || e.dead || e.lock.check('dead')) return 'Postać nie może teraz użyć teleportu.';
+            if (e.dead || e.lock.check('dead')) return 'Postać nie może teraz użyć teleportu.';
             const crafting = e.crafting;
             const craftOpen = crafting?.isOpen?.() || ['salvage', 'enhancement', 'extraction',
                 'socket_enchantment', 'socket_extraction', 'socket_composition'].some(name => crafting?.[name]);
             if (e.battle?.isBattleShow() || e.dialogue || e.trade || e.shop || e.depo || e.mails || e.auctions || craftOpen
                 || e.interfaceItems?.isInterfaceItemsDisable?.()) return 'Dokończ obecną czynność i wznów teleporty.';
-            if (e.lock.check() && !(this.ownTravel && e.lock.list.every(name => name === 'change_location')))
+            if (e.lock.check() && e.lock.list.some(name => !LOAD_LOCKS.has(name)))
                 return 'Gra czeka na Twoją reakcję. Wznów teleporty, gdy będzie można grać dalej.';
-            if ((!e.allInit || e.reload) && !this.ownTravel) return 'Poczekaj na załadowanie gry.';
             return '';
         }
         init() {
@@ -284,7 +367,10 @@
             this.sync();
             this.event('ITEM_USED', item => this.accept(item));
             this.event('AFTER_INTERFACE_START', () => this.rebuild());
-            for (const event of ['HERO_DEAD', 'OPEN_BATTLE_WINDOW', 'NEW_ASK']) this.event(event, () => {
+            this.event('HERO_DEAD', data => {
+                if (Number(data?.sec) > 0) this.q.pause('Postać nie może teraz użyć teleportu.');
+            });
+            for (const event of ['OPEN_BATTLE_WINDOW', 'NEW_ASK']) this.event(event, () => {
                 this.q.pause('Dokończ obecną czynność i wznów teleporty.');
             });
             // API has no removable batch-update callback; fetch and Item events are removable.
@@ -295,6 +381,16 @@
                 if (op?.response && args[0]?.t === 'reload') op.reload = true;
                 return original.apply(receiver, args);
             }, this.clean);
+            for (const name of ['onClear', 'startGameThread']) if (typeof this.e[name] === 'function') {
+                wrap(this.e, name, (original, receiver, args) => {
+                    if (name === 'onClear') this.q.wait();
+                    const result = original.apply(receiver, args);
+                    if (name === 'startGameThread') queueMicrotask(() => {
+                        if (this.context()) { this.sync(); this.q.ready(); }
+                    });
+                    return result;
+                }, this.clean);
+            }
             const tick = this.win.setInterval(() => this.tick(), 1000);
             this.clean.push(() => this.win.clearInterval(tick));
             this.save();
@@ -315,13 +411,6 @@
             this.operation = op;
             op.timer = this.win.setTimeout(() => op.finish('timeout'), 15000);
             try {
-                // A binds confirmation can send independently, so leave it to the player's inventory.
-                if (Object.hasOwn(stats(item), 'binds')) {
-                    this.message('Najpierw potwierdź przypisanie tego przedmiotu w torbie.');
-                    this.operation = null;
-                    op.finish('rejected');
-                    return op;
-                }
                 if (this.e.heroEquipment.blockBadTutorialItem(item) || this.e.heroEquipment.checkBlessEquipped(item)) {
                     this.operation = null;
                     op.finish('rejected');
@@ -335,8 +424,7 @@
                         if (this.operation === op) this.operation = null;
                         const choice = op.choice || (this.e.tpScroll?.itemId != null
                             && String(this.e.tpScroll.itemId) === op.item.id && this.e.tpScroll.wnd?.isShow());
-                        if (!op.done && op.accepted && op.reload && !choice) this.ownTravel = Date.now();
-                        op.finish(op.accepted ? (choice ? 'choice' : op.reload ? 'success' : 'uncertain') : 'rejected');
+                        op.finish(op.accepted ? (choice ? 'choice' : 'success') : 'rejected');
                         if (op.done) this.q.release(op);
                     });
                 });
@@ -355,7 +443,7 @@
             this.syncTimer = this.win.setTimeout(() => { this.syncTimer = null; this.sync(); }, 0);
         }
         sync() {
-            if (!this.context() || !this.e.allInit || Object.keys(this.e.items.getFetchPackageController()).length) return;
+            if (!this.context() || !this.loaded() || Object.keys(this.e.items.getFetchPackageController()).length) return;
             let changed = false;
             const live = new Set();
             for (const item of Object.values(this.e.heroEquipment.getHItems())) {
@@ -372,8 +460,13 @@
                 });
             }
             for (const [item, off] of this.items) if (!live.has(item)) { off(); this.items.delete(item); }
-            this.p.slots.forEach((ref, i) => {
-                if (ref && !this.item(ref)) { this.p.slots[i] = null; changed = true; }
+            this.p.slots.forEach((group, i) => {
+                if (group) {
+                    const refs = group.items.filter(ref => this.item(ref));
+                    if (refs.length !== group.items.length) {
+                        this.p.slots[i] = refs.length ? { items: refs } : null; changed = true;
+                    }
+                }
                 this.renderSlot(i);
             });
             if (changed) this.save();
@@ -383,12 +476,43 @@
         assign(index, item) {
             if (!this.context() || !teleport(item) || !this.item(identity(item))) return;
             if (this.p.config.replaceLock && this.p.slots[index]) return;
-            if (this.p.slots.some((ref, i) => i !== index && ref?.id === String(item.id))) {
+            if (this.p.slots.some((group, i) => i !== index && group?.items.some(ref => ref.id === String(item.id)))) {
                 this.message('Ten teleport jest już przypisany do slotu.');
                 return;
             }
-            this.p.slots[index] = identity(item);
+            this.p.slots[index] = groupOf(item);
             this.changedSlots(index);
+        }
+        importItems() {
+            if (!this.context() || !this.loaded()) return;
+            this.sync();
+            const seen = new Set(this.p.slots.flatMap(group => group?.items.map(ref => ref.id) || []));
+            const order = Array.from({ length: SIZE }, (_, i) => (this.p.config.start - 1 + i) % SIZE);
+            const changed = new Set();
+            let added = 0, skipped = 0;
+            for (const item of Object.values(this.e.heroEquipment.getHItems())) {
+                if (!teleport(item) || !this.item(identity(item)) || seen.has(String(item.id))) continue;
+                const key = groupKey(item);
+                let index = key === null ? -1 : this.p.slots.findIndex(group => {
+                    const members = this.members(group);
+                    return members.length && members.every(member => groupKey(member) === key);
+                });
+                if (index < 0) index = order.find(i => !this.p.slots[i]) ?? -1;
+                if (index < 0) { skipped++; continue; }
+                if (this.p.slots[index]) this.p.slots[index].items.push(identity(item));
+                else this.p.slots[index] = groupOf(item);
+                seen.add(String(item.id)); changed.add(index); added++;
+            }
+            this.changedSlots(...changed);
+            this.message(`Dodano teleporty: ${added}. Pominięto z powodu braku miejsca: ${skipped}.`);
+        }
+        toggleLock(index) {
+            if (!this.context()) return;
+            this.p.locked[index] = !this.p.locked[index]; this.save(); this.render();
+        }
+        unlockAll() {
+            if (!this.context()) return;
+            this.p.locked.fill(false); this.save(); this.render();
         }
         drop(index, source) {
             if (!this.context()) return;
@@ -427,7 +551,9 @@
                 .attr({ role: 'button', tabindex: 0 });
             b.find('.label').text(text);
             const run = e => { if (!b.hasClass('disable')) { e.preventDefault(); fn(); } };
-            b.on('click.tp', run).on('keydown.tp', e => { if (['Enter', 'Space'].includes(e.code)) run(e); });
+            b.on('click.tp', run).on('keydown.tp', e => {
+                if (['Enter', 'Space'].includes(e.code) && !e.repeat) { e.stopImmediatePropagation(); run(e); }
+            });
             return b;
         }
         number(name, value, attrs, template = 'ni-input-text') {
@@ -457,10 +583,10 @@
                 manageOpacity: 3, manageShow: false,
                 managePosition: { position: this.e.windowsData.position.CENTER_OR_SAVE_IN_STORAGE },
                 manageCollapse: { defaultVal: false, callbackFn: () => this.fit() },
-                manageSize: { sizeArray: [{ w: width, h: 'auto' }, { w: width, h: 'auto', maxH: '90vh' }],
-                    options: { defaultSizeIndex: 0 }, callback: () => this.fit() },
+                manageSize: { sizeArray: Array.from({ length: kind === 'PANEL' ? 3 : 1 }, () => ({ w: width, h: 'auto' })),
+                    options: { defaultSizeIndex: kind === 'PANEL' ? 1 : 0 }, callback: () => this.fit() },
                 ...(kind === 'PANEL' ? { widget: WIDGET, manageConfiguration: { fn: e => this.openConfig(e) } } : {}),
-                onclose: function () { this.hide(); },
+                onclose: kind === 'BIND' ? () => this.closeCapture() : function () { this.hide(); },
                 onstopdrag: () => this.fit()
             });
             wnd.addToAlertLayer();
@@ -487,13 +613,16 @@
                 const cell = $('<div>').addClass('item-slot interface-element-one-item-slot tp-slot')
                     .attr({ 'data-tp-slot': i, tabindex: 0, 'aria-label': `Slot ${i + 1}` });
                 cell.append($('<span>').addClass('tp-number').text(i + 1), $('<span>').addClass('tp-cooldown'));
-                cell.on('click.tp', () => { this.selected = i; this.render(); });
-                cell.on('dblclick.tp', () => { if (this.p.config.doubleClick) void this.q.manual(i + 1); });
+                cell.on('click.tp', e => {
+                    if (e.ctrlKey && e.button === 0) { e.preventDefault(); e.stopImmediatePropagation(); this.toggleLock(i); return; }
+                    this.selected = i; this.render();
+                });
+                cell.on('dblclick.tp', e => { if (!e.ctrlKey && this.p.config.doubleClick) void this.q.manual(i + 1); });
                 cell.on('contextmenu.tp longpress.tp', e => {
                     e.preventDefault();
                     if (!this.p.config.menu || !this.p.slots[i]) return;
                     const menu = [];
-                    if (this.p.state === 'off' && !this.q.flight) menu.push(['Użyj', () => void this.q.manual(i + 1)]);
+                    if (!this.p.locked[i] && this.p.state === 'off' && !this.q.flight) menu.push(['Użyj', () => void this.q.manual(i + 1)]);
                     menu.push(['Usuń', () => this.remove(i)]);
                     this.e.interface.showPopupMenu(menu, e);
                 });
@@ -518,9 +647,9 @@
                         }
                         return helper[0];
                     },
-                    start: () => {
+                    start: e => {
                         cell.data('tp-dropped', false);
-                        if (!this.p.slots[i]) return false;
+                        if (e.ctrlKey || !this.p.slots[i]) return false;
                     },
                     stop: e => {
                         if (e.type === 'pointercancel' || cell.data('tp-dropped')) return;
@@ -537,13 +666,17 @@
             const number = this.number('panel_start', this.p.config.start, { min: 1, max: SIZE }, 'input');
             this.startInput = number.input;
             const start = $('<div>').addClass('tp-start-row').append(
+                this.selection,
                 $('<label>').attr('for', number.input.attr('id')).text('Początek cyklu'), number.control,
                 this.button('Ustaw', () => {
                     if (!this.q.setStart(Number(this.startInput.val()))) this.message('Wpisz liczbę od 1 do 60.');
                 }));
             this.scroll = $('<div>').addClass('scroll-wrapper tp-scroll')
                 .append($('<div>').addClass('scroll-pane').append(this.grid));
-            panel.append(this.status, this.detail, this.pendingText, controls, this.scroll, this.count, this.selection, start);
+            this.unlockButton = this.button('Odblokuj zablokowane', () => this.unlockAll());
+            const imports = $('<div>').addClass('tp-import-row').append(
+                this.button('Pobierz teleporty', () => this.importItems()), this.unlockButton);
+            panel.append(this.status, this.detail, this.pendingText, controls, this.scroll, this.count, start, imports);
             this.panel = this.window('PANEL', 'Teleporty', panel, 320);
             this.summary = $('<span>').addClass('tp-summary');
             this.panel.$.find('.header-label-positioner').append(this.summary);
@@ -563,11 +696,11 @@
             this.cells[index].find('.tp-icon').remove();
         }
         renderSlot(index, force = false) {
-            const ref = this.p.slots[index];
-            const item = ref && this.item(ref);
+            const members = this.members(this.p.slots[index]);
+            const item = members.find(item => this.available(item)) || members[0];
             const old = this.views.get(index);
             if (!force && old?.item === item && old?.icon?.[0]?.isConnected) {
-                this.syncIcon(item, old.icon);
+                this.syncIcon(item, old.icon, members);
                 return;
             }
             this.clearSlot(index);
@@ -582,33 +715,47 @@
             icon.removeAttr('id').addClass('tp-icon').removeClass('inventory-item bottomItem');
             icon.on('mouseenter.tp', () => { this.hover = index; item.setTip(icon); })
                 .on('mouseleave.tp', () => { if (this.hover === index) this.hover = null; });
-            this.syncIcon(item, icon);
+            this.syncIcon(item, icon, members);
             cell.prepend(icon);
             this.views.set(index, { item, icon });
         }
-        syncIcon(item, icon) {
+        syncIcon(item, icon, members) {
             icon.find('.cooldown, .amount').remove();
             icon.append(item.$.find('.amount').first().clone(false));
             item.updadeViewAfterUpdateItem(icon);
             this.e.disableItemsManager?.manageItemDisableInHeroEQ(item, icon);
+            if (Object.hasOwn(stats(item), 'amount')) {
+                let amount = icon.find('.amount');
+                if (!amount.length) amount = this.$('<span>').addClass('amount').appendTo(icon);
+                amount.text(members.reduce((sum, member) => sum + quantity(member), 0));
+            }
         }
         overlays() {
             if (!this.panel.isShow()) return;
-            for (const [i, { item, icon }] of this.views) {
+            for (const i of [...this.views.keys()]) {
+                this.renderSlot(i);
+                const view = this.views.get(i);
+                if (!view) continue;
+                const { item, icon } = view;
                 const left = cooldown(item);
                 this.cells[i].toggleClass('tp-unavailable', !this.available(item));
                 this.cells[i].find('.tp-cooldown').text(left === Infinity ? '?' : left > 0 ?
                     left >= 3600 ? `${Math.ceil(left / 3600)}h` : left >= 60 ? `${Math.ceil(left / 60)}m` : `${left}s` : '');
                 if (this.hover === i) item.setTip(icon);
             }
+            this.updateSummary();
+        }
+        updateSummary() {
+            const next = this.q.find();
+            const text = `Następna: ${next ? destination(next.item) : 'brak gotowych'}`;
+            this.summary.text(text).tip(text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
         }
         render() {
             if (!this.panel || this.dead) return;
             const p = this.p;
-            const state = { off: 'Wyłączony', active: 'Aktywny', paused: 'Pauza' }[p.state];
-            this.status.text(`Tryb: ${p.state === 'off' ? 'Ręczny' : 'Auto'} · ${state}`);
+            this.status.text({ off: 'Tryb: Ręczny', active: 'Tryb: Auto — Aktywny', paused: 'Tryb: Auto — Pauza' }[p.state]);
             this.panel.$.toggleClass('tp-active', p.state === 'active').toggleClass('tp-paused', p.state === 'paused');
-            this.summary.text(`Następny: ${p.next}`);
+            this.updateSummary();
             this.detail.text(`Następny slot: ${p.next} · Początek: ${p.config.start} · Interwał: ${p.config.interval} s`);
             this.pendingText.text(this.q.flight ? this.q.flight.done ?
                 'Brak odpowiedzi. Poczekaj lub odśwież grę przed kolejną próbą.' : 'Czekam na odpowiedź gry…' : '');
@@ -616,16 +763,18 @@
             this.autoButton.find('.label').text({ off: 'Start auto', active: 'Pauza', paused: 'Wznów' }[p.state]);
             this.autoButton.toggleClass('disable', !p.config.auto || (Boolean(this.q.flight) && p.state !== 'active'));
             this.count.text(`Przypisane teleporty: ${p.slots.filter(Boolean).length} / 60`);
-            this.selection.text(this.selected == null ? 'Wybierz slot.' : `Wybrany slot: ${this.selected + 1}`);
+            this.selection.text(`Wybrany slot: ${this.selected == null ? '—' : this.selected + 1}`);
+            this.unlockButton.toggle(p.locked.some(Boolean));
             this.cells.forEach((cell, i) => {
-                cell.toggleClass('tp-next', i === p.next - 1).toggleClass('tp-selected', i === this.selected);
+                cell.toggleClass('tp-next', i === p.next - 1).toggleClass('tp-selected', i === this.selected)
+                    .toggleClass('tp-locked', p.locked[i]);
             });
             for (const wnd of this.windows) for (const k of ['background', 'border', 'accent']) wnd.$[0].style.setProperty(`--tp-${k}`, p.config[k]);
             this.overlays();
         }
         fillConfig(config) {
             const $ = this.$;
-            this.capture = null;
+            this.closeCapture();
             this.draft = structuredClone(config);
             this.configBody.empty();
             this.fields = {};
@@ -644,7 +793,7 @@
                     });
                     label.on('keydown.tp', e => {
                         if (!['Space', 'Enter'].includes(e.code) || e.repeat) return;
-                        e.preventDefault(); input.prop('checked', !input.prop('checked')).trigger('change');
+                        e.preventDefault(); e.stopImmediatePropagation(); input.prop('checked', !input.prop('checked')).trigger('change');
                     });
                 } else if (type === 'color') {
                     control = this.api.Templates.get('c-color-picker').addClass('tp-field tp-color');
@@ -660,10 +809,9 @@
             };
             section('Skróty klawiszowe');
             for (const [name, label] of [['manualKey', 'Użyj ręcznie'], ['autoKey', 'Auto / pauza']]) {
-                const button = this.button(keyText(this.draft[name]), () => { this.capture = name; button.find('.label').text('Naciśnij klawisze…'); });
+                const button = this.button(keyText(this.draft[name]), () => this.openCapture(name));
                 this.fields[name] = button;
-                this.configBody.append($('<div>').addClass('tp-bind-row').append($('<span>').text(label), button,
-                    this.button('Wyczyść', () => { this.draft[name] = null; this.capture = null; button.find('.label').text('Brak'); }, 'red')));
+                this.configBody.append($('<div>').addClass('tp-bind-row').append($('<span>').text(label), button));
             }
             section('Ustawienia cyklu');
             field('start', 'Początek cyklu', 'number', { min: 1, max: SIZE });
@@ -718,6 +866,50 @@
             this.configWindow.setWndOnPeak();
             this.fit();
         }
+        conflict(name, key, event) {
+            if (!keyValid(key)) return 'Naciśnij poprawną kombinację klawiszy.';
+            const other = name === 'manualKey' ? 'autoKey' : 'manualKey';
+            if (sameKey(key, this.p.config[other])) return 'Ten skrót jest już używany przez teleporty.';
+            return gameConflict(key, this.e, event) || '';
+        }
+        openCapture(name) {
+            this.closeCapture();
+            const $ = this.$;
+            if (!this.bindWindow) {
+                const body = $('<div>').addClass('tp-bind-body');
+                this.bindFunction = $('<div>').addClass('tp-status');
+                this.bindSaved = $('<div>');
+                this.bindPreview = $('<div>').addClass('tp-key-preview');
+                this.bindError = $('<div>').addClass('tp-key-error').attr({ role: 'status', 'aria-live': 'polite' });
+                body.append(this.bindFunction, this.bindSaved, $('<div>').text('Naciśnij wybraną kombinację'),
+                    this.bindPreview, this.bindError, $('<div>').addClass('tp-config-actions').append(
+                        this.button('Zapisz', () => this.saveCapture()),
+                        this.button('Wyczyść', () => { if (this.capture) { this.capture.key = null; this.previewCapture(); } }, 'red'),
+                        this.button('Anuluj', () => this.closeCapture())));
+                this.bindWindow = this.window('BIND', 'Ustaw skrót klawiszowy', body, 320);
+            }
+            this.capture = { name, key: structuredClone(this.p.config[name]) };
+            this.bindFunction.text(name === 'manualKey' ? 'Użyj ręcznie' : 'Auto / pauza');
+            this.bindSaved.text(`Zapisany skrót: ${keyText(this.p.config[name])}`);
+            this.previewCapture();
+            this.bindWindow.show(); this.bindWindow.setWndOnPeak(); this.fit();
+        }
+        previewCapture(event) {
+            if (!this.capture) return;
+            this.bindPreview.text(keyText(this.capture.key));
+            this.bindError.text(this.conflict(this.capture.name, this.capture.key, event));
+        }
+        saveCapture() {
+            if (!this.capture || !this.context()) return;
+            const { name, key } = this.capture;
+            const error = this.conflict(name, key);
+            if (error) { this.bindError.text(error); return; }
+            this.p.config[name] = structuredClone(key);
+            if (this.draft) this.draft[name] = structuredClone(key);
+            this.fields[name]?.find('.label').text(keyText(key));
+            this.save(); this.closeCapture(); this.render();
+        }
+        closeCapture() { this.capture = null; this.bindWindow?.hide(); }
         togglePanel() {
             this.panel.toggle();
             if (this.panel.isShow()) { this.panel.setWndOnPeak(); this.sync(); this.fit(); }
@@ -746,30 +938,36 @@
             }, true);
             this.listen(this.win.document, 'pointercancel', () => { incoming = null; }, true);
             this.listen(this.win.document, 'keydown', e => {
-                if (!this.context() || e.repeat || this.held.has(e.code)) return;
-                this.held.add(e.code);
+                if (!this.context()) return;
                 if (this.capture) {
                     e.preventDefault(); e.stopImmediatePropagation();
-                    if (['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(e.code)) return;
-                    if (e.code === 'Escape') { const name = this.capture; this.capture = null; this.fields[name].find('.label').text(keyText(this.draft[name])); return; }
-                    const key = keyOf(e);
-                    const other = this.capture === 'manualKey' ? 'autoKey' : 'manualKey';
-                    if (sameKey(key, this.draft[other])) { this.message('Ten skrót jest już używany przez teleporty.'); return; }
-                    this.draft[this.capture] = key;
-                    this.fields[this.capture].find('.label').text(keyText(key));
-                    this.capture = null; return;
+                    this.held.add(e.code);
+                    this.captureReleases.add(e.code);
+                    if (MODIFIERS.has(e.code) || e.repeat) return;
+                    if (e.code === 'Escape') { this.closeCapture(); return; }
+                    this.capture.key = keyOf(e); this.previewCapture(e); return;
                 }
+                if (e.repeat || this.held.has(e.code)) return;
+                this.held.add(e.code);
                 if (e.composedPath().some(node => node.matches?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'))) return;
                 if (['Space', 'Enter'].includes(e.code) && e.composedPath().some(node => node.matches?.('[role="button"], [role="checkbox"]'))) return;
                 const key = keyOf(e);
+                if (!sameKey(key, this.p.config.manualKey) && !sameKey(key, this.p.config.autoKey)) return;
+                if (gameConflict(key, this.e, e)) return;
                 if (sameKey(key, this.p.config.manualKey) && this.p.state === 'off') {
                     e.preventDefault(); e.stopImmediatePropagation(); void this.q.manual();
                 } else if (sameKey(key, this.p.config.autoKey) && this.p.config.auto) {
                     e.preventDefault(); e.stopImmediatePropagation(); void this.q.toggle();
                 }
             }, true);
-            this.listen(this.win.document, 'keyup', e => this.held.delete(e.code), true);
-            this.listen(this.win, 'blur', () => this.held.clear());
+            this.listen(this.win.document, 'keypress', e => {
+                if (this.capture || this.captureReleases.has(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); }
+            }, true);
+            this.listen(this.win.document, 'keyup', e => {
+                if (this.capture || this.captureReleases.has(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); }
+                this.captureReleases.delete(e.code); this.held.delete(e.code);
+            }, true);
+            this.listen(this.win, 'blur', () => { this.held.clear(); this.captureReleases.clear(); });
             this.listen(this.win, 'resize', () => this.fit());
             this.listen(this.win.document, 'visibilitychange', () => { this.held.clear(); if (!this.win.document.hidden) this.overlays(); });
         }
@@ -840,14 +1038,11 @@
         }
         tick() {
             if (!this.context()) { this.env.restart(); return; }
-            if (this.ownTravel && this.e.allInit && !this.e.reload) this.ownTravel = 0;
-            if (this.ownTravel && Date.now() - this.ownTravel > 60000) {
-                this.ownTravel = 0;
-                this.q.pause('Gra długo się ładuje. Sprawdź ją przed wznowieniem teleportów.');
-            }
-            if (this.p.state === 'active' && !this.operation) {
+            if (this.p.state === 'active') {
                 const reason = this.blocked();
                 if (reason) this.q.pause(reason);
+                else if (!this.loaded()) this.q.wait();
+                else this.q.ready();
             }
             this.overlays();
         }
@@ -923,5 +1118,5 @@
         return handle;
     }
     root.TeleportQueue = Object.freeze({ boot, Queue, App, load, defaults, cooldown, teleport, readyItem,
-        needsTarget, sameKey, keyOf, advance, profileKey, matches, ready });
+        needsTarget, sameKey, keyOf, advance, profileKey, matches, ready, groupKey, groupOf, destination, gameConflict, nativeKey });
 })(globalThis);

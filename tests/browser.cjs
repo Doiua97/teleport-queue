@@ -10,6 +10,9 @@ function moduleCode(name) {
     }
     throw new Error(`Brak modułu ${name}`);
 }
+const equipment = moduleCode('HeroEquipment');
+const useMethod = equipment.slice(equipment.indexOf('this.sendUseRequest = function'),
+    equipment.indexOf('this.callCheckCanFinishExternalTutorial ='));
 const templates = Object.fromEntries(['border-window', 'button', 'widget-button', 'item', 'input', 'ni-input-text',
     'checkbox-custom', 'c-color-picker', 'scrollbar-wrapper', 'crafting'].map(name => {
     const code = moduleCode('TemplatesData');
@@ -42,6 +45,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
         await page.evaluate(templates => {
             const $ = window.$;
             window.isset = x => x !== undefined;
+            window.isInt = Number.isInteger;
             window.mobileCheck = window.isMobileApp = () => false;
             window.getClickEventName = () => 'click';
             window.getRightClickEventName = () => 'contextmenu longpress';
@@ -67,6 +71,10 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             const server = { existing: [0, 'top-left'] };
             window.fullBars = false;
             window.Engine = {
+                hotKeys: { hotKeys: {}, getSortedHotKeys: () => [], getKeyByClbName: () => '' },
+                map: { lock: { list: [], check() { return this.list; } }, getDrawable() { return this.drawable; }, getUnlock() { return this.unlock; }, drawable: true, unlock: true },
+                onClear() { this.allInit = false; this.reload = true; this.map.drawable = false; this.map.unlock = false; this.map.lock.list = ['game_init']; this.lock.add('mapLoadedAndAllInit'); },
+                startGameThread() { this.allInit = true; this.reload = false; this.map.drawable = true; this.map.unlock = true; this.map.lock.list = []; this.lock.remove('mapLoadedAndAllInit'); },
                 allInit: true, zoomFactor: 1, windowMaxZIndex: 100,
                 hero: { d: { id: 42, hp: 100 } }, worldConfig: { getWorldName: () => 'nerthus' },
                 battle: { isBattleShow: () => false },
@@ -143,12 +151,13 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             $.fn.pointerDroppable = function (options) { this.each((i, el) => dropOptions.set(el, options)); return nativeDrop.call(this, options); };
             window.makeItem = (id, stat = 'teleport=1,10,10;amount=3') => {
                 const events = {};
-                const item = { id: String(id), hid: 'h' + id, cl: 32, loc: 'g', st: 20, stat,
+                const item = { id: String(id), hid: 'h' + id, cl: 32, tpl: 'tpl-' + id, loc: 'g', st: 20, stat,
                     $: Templates_default.get('item'), parseStats() { return Object.fromEntries(this.stat.split(';').map(s => { const [k, v] = s.split('='); return [k, v ?? null]; })); },
                     on: (name, fn) => (events[name] ??= []).push(fn),
                     unregisterCallback: (name, fn) => { events[name] = (events[name] || []).filter(f => f !== fn); },
                     trigger(name) { for (const fn of [...events[name] || []]) fn(); },
                     checkExpires: () => false, issetTimelimitStat: () => false, issetExpiresStat: () => false,
+                    getAnimationStat: () => false,
                     drawNotice() {}, updadeViewAfterUpdateItem(icon) { icon.find('.amount').remove(); icon.append($('<div>').addClass('amount').text(this.parseStats().amount)); },
                     setTip: icon => icon.tip('Teleport'),
                     updateDynamicTips() {}
@@ -167,6 +176,17 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             window.env = { win: window, get: (key, value) => structuredClone(values.get(key) ?? value), set: (key, value) => values.set(key, structuredClone(value)),
                 icon: '', restart() { throw new Error('unexpected restart'); } };
         });
+        await page.addScriptTag({ content: `(() => {
+            const self = Engine.heroEquipment;
+            self.callCheckCanFinishExternalTutorial = () => {};
+            window._g = (query, callback) => {
+                requests.push(query.match(/id=([^&]+)/)[1]);
+                const respond = () => callback(responseType === 'rejected' ? { alert: 'Odmowa' } :
+                    responseType === 'success' ? { t: 'reload' } : {});
+                if (responseType === 'delayed') window.reply = respond; else respond();
+            };
+            (function () { ${useMethod} }).call(self);
+        })();` });
         await page.addStyleTag({ content: fs.readFileSync(path.join(sourceDir, 'style.KGLtTzyt.css'), 'utf8') });
         await page.addStyleTag({ path: path.resolve(__dirname, '../teleporty.css') });
         await page.addScriptTag({ path: path.resolve(__dirname, '../teleporty.core.js') });
@@ -194,12 +214,12 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
         await check('duplikaty, blokada zastąpienia, zamiana i rejestracja widoków', async () => {
             const result = await page.evaluate(() => {
                 app.assign(0, hItems['1']); app.assign(1, hItems['1']); const duplicate = app.p.slots[1] === null;
-                app.p.config.replaceLock = true; app.assign(0, hItems['2']); const locked = app.p.slots[0].id === '1';
+                app.p.config.replaceLock = true; app.assign(0, hItems['2']); const locked = app.p.slots[0].items[0].id === '1';
                 app.assign(1, hItems['2']); app.swap(0, 1);
                 return { duplicate, locked, refs: app.p.slots.slice(0, 2), icons: document.querySelectorAll('.tp-icon').length,
                     views: Object.values(Engine.items.getViews()).map(v => v.TP_QUEUE_VIEW?.length || 0) };
             });
-            assert(result.duplicate && result.locked); assert.equal(result.refs[0].id, '2'); assert.equal(result.refs[1].id, '1');
+            assert(result.duplicate && result.locked); assert.equal(result.refs[0].items[0].id, '2'); assert.equal(result.refs[1].items[0].id, '1');
             assert.equal(result.icons, 2); assert.deepEqual(result.views, [1, 1]);
             if (process.env.TP_SCREENSHOT) await page.screenshot({ path: process.env.TP_SCREENSHOT });
         });
@@ -248,7 +268,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             await page.evaluate(() => app.q.stop()); await page.keyboard.press('F10');
             assert.equal(await page.evaluate(() => requests.length), start + 7);
             await page.evaluate(() => { app.q.stop(); app.openConfig(); app.fields.interval.val(1); });
-            await page.locator('.tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
+            await page.locator('.tp-config .tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
             await page.evaluate(() => app.configWindow.hide());
             const beforeInterval = await page.evaluate(() => requests.length);
             await page.locator('.tp-controls .tp-button').nth(1).click();
@@ -291,21 +311,21 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                 const old = hItems['1']; old.trigger('delete'); old.$.remove();
                 Engine.items.deleteViewWithAllIcon('1'); delete hItems['1']; delete Engine.items.test().items['1'];
                 makeItem(1); await new Promise(r => setTimeout(r, 10));
-                const retained = app.p.slots[1]?.id === '1' && app.views.get(1).item === hItems['1'];
+                const retained = app.p.slots[1]?.items[0].id === '1' && app.views.get(1).item === hItems['1'];
                 hItems['1'].trigger('delete'); delete hItems['1']; delete Engine.items.test().items['1'];
                 Engine.items.deleteViewWithAllIcon('1'); await new Promise(r => setTimeout(r, 10));
                 return { amount, retained, removed: app.p.slots[1] === null };
             });
             assert.equal(result.amount, '2'); assert(result.retained && result.removed);
         });
-        await check('potwierdzenie sukcesu, alert i ITEM_USED bez teleportacji', async () => {
+        await check('potwierdzenie sukcesu, alert i ITEM_USED bez t=reload', async () => {
             const result = await page.evaluate(async () => {
                 app.p.config.replaceLock = false; app.assign(0, hItems['2']); app.q.stop(); responseType = 'success';
                 await app.q.manual(); const success = app.p.next === 2;
                 app.q.stop(); responseType = 'rejected'; await app.q.manual(); const rejected = app.p.next === 1;
-                responseType = 'uncertain'; await app.q.manual(); return { success, rejected, uncertain: app.p.next === 1 };
+                responseType = 'uncertain'; await app.q.manual(); return { success, rejected, acceptedWithoutReload: app.p.next === 2 };
             });
-            assert(result.success && result.rejected && result.uncertain);
+            assert(result.success && result.rejected && result.acceptedWithoutReload);
         });
         await check('KC bez celu uruchamia natywną akcję, pauzuje i zachowuje slot', async () => {
             const result = await page.evaluate(async () => {
@@ -406,7 +426,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             assert(source && target);
             await page.mouse.move(source.x + 16, source.y + 16); await page.mouse.down();
             await page.mouse.move(target.x + 16, target.y + 16, { steps: 15 }); await page.mouse.up();
-            const result = await page.evaluate(() => ({ assigned: app.p.slots[2]?.id, groundDrops }));
+            const result = await page.evaluate(() => ({ assigned: app.p.slots[2]?.items[0].id, groundDrops }));
             assert.equal(result.assigned, '2'); assert.equal(result.groundDrops, 0);
         });
         await check('mała rozdzielczość i zoom nie duplikują okien', async () => {
@@ -468,7 +488,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                 await page.evaluate(() => app.openConfig());
                 const label = page.locator('.tp-checkbox label').filter({ hasText: 'Blokuj zastąpienie slotu' });
                 if ((await page.evaluate(() => app.fields.replaceLock.prop('checked'))) !== lock) await label.click();
-                await page.locator('.tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
+                await page.locator('.tp-config .tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
                 assert.equal(await page.evaluate(() => app.p.config.replaceLock), lock);
                 assert.equal(await page.evaluate(() => values.get(app.key).config.replaceLock), lock);
                 await page.evaluate(() => app.configWindow.hide());
@@ -480,7 +500,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                         await page.mouse.move(source.x + 16, source.y + 16); await page.mouse.down();
                         await page.mouse.move(target.x + 18, target.y + 18, { steps: 12 }); await page.mouse.up();
                     } else await page.evaluate(() => dropOptions.get(app.cells[10][0]).drop({}, { draggable: hItems['11'].$ }));
-                    const result = await page.evaluate(() => ({ id: app.p.slots[10]?.id, count: assignCount, groundDrops }));
+                    const result = await page.evaluate(() => ({ id: app.p.slots[10]?.items[0].id, count: assignCount, groundDrops }));
                     assert.equal(result.id, lock ? '10' : '11'); assert.equal(result.count, 1); assert.equal(result.groundDrops, 0);
                     await page.evaluate(() => {
                         app.remove(10); app.assign(10, hItems['10']); assignCount = 0;
@@ -491,14 +511,14 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                         await page.mouse.move(source.x + 16, source.y + 16); await page.mouse.down();
                         await page.mouse.move(target.x + 18, target.y + 18, { steps: 12 }); await page.mouse.up();
                     } else await page.evaluate(() => dropOptions.get(app.cells[11][0]).drop({}, { draggable: hItems['11'].$ }));
-                    assert.equal(await page.evaluate(() => app.p.slots[11]?.id), '11');
+                    assert.equal(await page.evaluate(() => app.p.slots[11]?.items[0].id), '11');
                     assert.equal(await page.evaluate(() => assignCount), 1);
                     // Internal physical drag uses the native plugin and always swaps, even with replacement locked.
                     const a = await page.locator('.tp-slot').nth(10).boundingBox();
                     const b = await page.locator('.tp-slot').nth(11).boundingBox(); assert(a && b);
                     await page.mouse.move(a.x + 18, a.y + 18); await page.mouse.down(); await page.waitForTimeout(120);
                     await page.mouse.move(b.x + 18, b.y + 18, { steps: 6 }); await page.mouse.up();
-                    assert.deepEqual(await page.evaluate(() => app.p.slots.slice(10, 12).map(r => r?.id)), ['11', '10']);
+                    assert.deepEqual(await page.evaluate(() => app.p.slots.slice(10, 12).map(r => r?.items[0].id)), ['11', '10']);
                 }
             }
             await page.evaluate(() => { app.scroll.trigger('scrollTop'); app.panel.setContentPos('280px', '60px'); });
@@ -514,9 +534,9 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
         });
         await check('checkbox auto natychmiast zatrzymuje aktywny i wstrzymany automat bez Zapisz', async () => {
             await page.evaluate(() => app.openConfig());
-            await page.evaluate(() => app.fields.manualKey.trigger('click')); await page.keyboard.press('F9');
-            await page.evaluate(() => app.fields.autoKey.trigger('click')); await page.keyboard.press('F10');
-            await page.locator('.tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
+            await page.evaluate(() => app.fields.manualKey.trigger('click')); await page.keyboard.press('F9'); await page.evaluate(() => app.saveCapture());
+            await page.evaluate(() => app.fields.autoKey.trigger('click')); await page.keyboard.press('F10'); await page.evaluate(() => app.saveCapture());
+            await page.locator('.tp-config .tp-config-actions .tp-button').filter({ hasText: 'Zapisz' }).click();
             for (const state of ['active', 'paused']) {
                 const before = await page.evaluate(() => requests.length);
                 const label = page.locator('.tp-checkbox label').filter({ hasText: 'Włącz tryb automatyczny' });
@@ -576,7 +596,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
         await check('destroy usuwa widoki, okna, callbacki i adaptery; ponowny profil zachowany', async () => {
             const result = await page.evaluate(() => {
                 app.destroy(); Engine.hero.d.id = 42; app = new TeleportQueue.App(env).init();
-                const restored = app.p.slots[4]?.id === '3'; app.destroy();
+                const restored = app.p.slots[4]?.items[0].id === '3'; app.destroy();
                 return { restored, windows: document.querySelectorAll('.tp-window').length,
                     views: Object.values(Engine.items.getViews()).every(v => !v.TP_QUEUE_VIEW), registry: !Engine.itemsViewData.TP_QUEUE_VIEW };
             });
@@ -597,6 +617,225 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                 first.destroy(); return { duplicate, destroyed: !window.__doiuaTeleportQueueV1 && !document.querySelector('.tp-window') };
             });
             assert(result.duplicate && result.destroyed);
+        });
+        await page.evaluate(() => {
+            Engine.hero.d.id = 88; app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); app.panel.setContentPos('280px', '40px');
+            app.assign(0, hItems['2']); app.p.config.auto = true; responseType = 'uncertain';
+        });
+        await check('0.1.2: zwykły ITEM_USED, binds i aktualizacja cooldownu', async () => {
+            const result = await page.evaluate(async () => {
+                messages.length = 0; hItems['2'].stat = 'teleport=1,2,3,Ithan;amount=5;binds=1';
+                await app.q.manual(); const accepted = app.p.next === 2 && messages.length === 0;
+                hItems['2'].stat += ';timelimit=180,' + (Math.ceil(Date.now() / 1000) + 100);
+                hItems['2'].trigger('afterUpdate'); await new Promise(r => setTimeout(r, 10));
+                const cooldown = app.cells[0].find('.tp-cooldown').text() !== '' && !app.available(hItems['2']);
+                hItems['2'].stat = 'teleport=1,2,3,Ithan;amount=5'; app.sync(); app.q.stop();
+                return { accepted, cooldown };
+            }); assert(result.accepted && result.cooldown);
+        });
+        await check('0.1.2: onClear i startGameThread, blokady mapy i pełny interwał po gotowości', async () => {
+            const result = await page.evaluate(async () => {
+                await app.q.toggle(); const before = requests.length; Engine.lock.add('change_location'); Engine.onClear();
+                app.tick(); const waiting = app.p.state === 'active' && app.q.timer === null && app.q.waiting;
+                await app.q.attempt(); const noRequest = requests.length === before;
+                Engine.startGameThread(); await Promise.resolve();
+                const stillWaiting = app.q.timer === null && !app.loaded();
+                Engine.lock.remove('change_location'); app.tick();
+                const ready = app.p.state === 'active' && app.q.timer !== null && app.loaded();
+                const warnings = messages.filter(s => s.includes('reakcję') || s.includes('potwierdzić')).length;
+                app.q.stop(); return { waiting, noRequest, stillWaiting, ready, warnings };
+            }); assert(result.waiting && result.noRequest && result.stillWaiting && result.ready); assert.equal(result.warnings, 0);
+        });
+        await check('0.1.2: HP=0, HERO_DEAD sec=0, rzeczywista śmierć i ręczne wznowienie', async () => {
+            const result = await page.evaluate(async () => {
+                Engine.hero.d.hp = 0; await app.q.toggle();
+                const hp = app.p.state === 'active' && app.blocked() === '';
+                API.callEvent(Engine.apiData.HERO_DEAD, { sec: 0 }); const zero = app.p.state === 'active';
+                Engine.dead = true; Engine.lock.add('dead'); API.callEvent(Engine.apiData.HERO_DEAD, { sec: 10 });
+                const death = app.p.state === 'paused' && Boolean(app.blocked());
+                Engine.dead = false; Engine.lock.remove('dead'); API.callEvent(Engine.apiData.HERO_DEAD, { sec: 0 }); app.tick();
+                const noResume = app.p.state === 'paused' && app.q.timer === null;
+                app.q.stop(); Engine.hero.d.hp = 100; return { hp, zero, death, noResume };
+            }); assert(Object.values(result).every(Boolean));
+        });
+        await check('0.1.2: Ctrl+LPM blokuje i odblokowuje pusty slot, nie używa przedmiotu', async () => {
+            const before = await page.evaluate(() => requests.length);
+            await page.locator('.tp-slot').nth(2).click({ modifiers: ['Control'] });
+            assert.equal(await page.evaluate(() => app.p.locked[2]), true);
+            assert.equal(await page.locator('.tp-import-row .tp-button').filter({ hasText: 'Odblokuj' }).isVisible(), true);
+            await page.locator('.tp-slot').nth(2).click({ modifiers: ['Control'] });
+            assert.equal(await page.evaluate(() => app.p.locked[2]), false);
+            assert.equal(await page.evaluate(() => requests.length), before);
+        });
+        await check('0.1.2: blokada pozycji chroni użycie, pozostaje przy zamianie i zapisie', async () => {
+            await page.locator('.tp-slot').nth(0).click({ modifiers: ['Control'] });
+            const before = await page.evaluate(() => requests.length);
+            await page.locator('.tp-slot').nth(0).dblclick(); await page.locator('.tp-slot').nth(0).click({ button: 'right' });
+            const result = await page.evaluate(async () => {
+                const menu = !lastMenu.some(row => row[0] === 'Użyj'); await app.q.manual(1);
+                app.assign(0, hItems['3']); const retained = app.p.locked[0] && app.p.slots[0].items[0].id === '3';
+                app.assign(1, hItems['2']); app.swap(0, 1); const stayed = app.p.locked[0] && !app.p.locked[1];
+                const saved = values.get(app.key).locked[0];
+                await app.q.manual(); const skipped = requests.at(-1) === '3';
+                const refs = JSON.stringify(app.p.slots); app.unlockAll();
+                return { menu, retained, stayed, saved, skipped, refs: refs === JSON.stringify(app.p.slots), locks: app.p.locked.some(Boolean) };
+            }); assert(result.menu && result.retained && result.stayed && result.saved && result.skipped && result.refs); assert(!result.locks);
+            assert.equal(await page.evaluate(() => requests.length), before + 1); await page.evaluate(() => app.q.stop());
+        });
+        await check('0.1.2: import od początku i zawinięcie, brak duplikatów i zmiany ręcznej kolejności', async () => {
+            const result = await page.evaluate(() => {
+                app.q.setStart(58); const old = structuredClone(app.p.slots);
+                app.importItems(); const first = structuredClone(app.p.slots);
+                const wrap = app.p.slots[57] && app.p.slots[58];
+                app.importItems(); const same = JSON.stringify(first) === JSON.stringify(app.p.slots);
+                const ids = app.p.slots.flatMap(g => g?.items.map(r => r.id) || []);
+                return { wrap: Boolean(wrap), same, manual: JSON.stringify(old.slice(0, 2)) === JSON.stringify(app.p.slots.slice(0, 2)),
+                    unique: ids.length === new Set(ids).size, suffix: app.q.find() ? app.q.find().slot >= 58 : true };
+            }); assert(Object.values(result).every(Boolean));
+        });
+        await check('0.1.2: grupowanie stosów i różnych KC, suma oraz rzeczywisty ekwipunek', async () => {
+            const result = await page.evaluate(() => {
+                for (const [id, stat, tpl] of [[501, 'teleport=2,3,4,Tristam;amount=5', 'scroll'], [502, 'teleport=2,3,4,Tristam;amount=7', 'scroll'],
+                    [503, 'custom_teleport=8,1,2,Ithan;amount=2', 'kc'], [504, 'custom_teleport=9,1,2,Nithal;amount=3', 'kc'],
+                    [505, 'teleport=2,3,4,Tristam;timelimit=180', 'stone'], [506, 'teleport=2,3,4,Tristam;timelimit=180', 'stone']]) {
+                    makeItem(id, stat).tpl = tpl;
+                }
+                const bag = JSON.stringify(Object.values(hItems).map(i => [i.id, i.hid, i.stat])); app.importItems();
+                window.groupIndex = app.p.slots.findIndex(g => g?.items.some(r => r.id === '501'));
+                const g = app.p.slots[groupIndex]; const slotOf = id => app.p.slots.findIndex(g => g?.items.some(r => r.id === id));
+                return { members: g.items.length, amount: app.cells[groupIndex].find('.amount').text(),
+                    kc: slotOf('503') !== slotOf('504'), stone: slotOf('505') !== slotOf('506'),
+                    intact: bag === JSON.stringify(Object.values(hItems).map(i => [i.id, i.hid, i.stat])),
+                    separate: hItems['501'] !== hItems['502'], icons: app.cells[groupIndex].find('.tp-icon').length };
+            }); assert.equal(result.members, 2); assert.equal(result.amount, '12'); assert(result.kc && result.stone && result.intact && result.separate); assert.equal(result.icons, 1);
+        });
+        await check('0.1.2: amount grupy, pojedyncze użycie, usunięcie członka i ostatniego', async () => {
+            const result = await page.evaluate(async () => {
+                hItems['501'].stat = 'teleport=2,3,4,Tristam;amount=0'; hItems['501'].trigger('afterUpdate');
+                await new Promise(r => setTimeout(r, 10)); const amount = app.cells[groupIndex].find('.amount').text();
+                const before = requests.length; responseType = 'rejected'; await app.q.manual(groupIndex + 1);
+                const single = requests.length === before + 1 && requests.at(-1) === '502';
+                for (const id of ['501', '502']) {
+                    hItems[id].trigger('delete'); hItems[id].$.remove(); delete hItems[id]; delete Engine.items.test().items[id];
+                    app.sync(); if (id === '501') window.oneRemaining = app.p.slots[groupIndex].items.length === 1;
+                }
+                responseType = 'uncertain'; return { amount, single, one: oneRemaining, empty: app.p.slots[groupIndex] === null };
+            }); assert.equal(result.amount, '7'); assert(result.single && result.one && result.empty);
+        });
+        await check('0.1.2: import nie scala dwóch ręcznych pozycji, pełne 60 nie nadpisuje', async () => {
+            const result = await page.evaluate(() => {
+                for (const id of [507, 508, 509]) makeItem(id, 'teleport=2,3,4,Tristam;amount=3').tpl = 'manual';
+                app.assign(10, hItems['507']); app.assign(11, hItems['508']); app.importItems();
+                const positions = app.p.slots[10].items.length === 2 && app.p.slots[11].items.length === 1;
+                const saved = structuredClone(app.p);
+                for (let i = 0; i < 60; i++) { app.remove(i); app.assign(i, makeItem(1000 + i, 'teleport=2,3,4,Tristam;timelimit=180')); }
+                const snapshot = JSON.stringify(app.p.slots); messages.length = 0; app.importItems();
+                const full = snapshot === JSON.stringify(app.p.slots) && messages.length === 1 && /Dodano teleporty: 0/.test(messages[0])
+                    && !/braku miejsca: 0/.test(messages[0]);
+                for (let i = 0; i < 60; i++) { const id = String(1000 + i); hItems[id].$.remove(); delete hItems[id]; delete Engine.items.test().items[id]; }
+                Object.assign(app.p, saved); app.sync(); return { positions, full };
+            }); assert(result.positions && result.full);
+        });
+        await check('0.1.2: status, następna lokacja, jasny nagłówek i jedna linia stopki', async () => {
+            const result = await page.evaluate(() => {
+                app.q.stop(); app.q.setStart(1); app.unlockAll(); app.p.next = 1; app.render();
+                const manual = app.status.text() === 'Tryb: Ręczny';
+                const next = app.summary.text() === 'Następna: Ithan';
+                app.p.locked[0] = true; app.render(); const choice = app.summary.text() === 'Następna: wybór miejsca';
+                app.p.locked.fill(true); app.render(); const none = app.summary.text() === 'Następna: brak gotowych'; app.unlockAll();
+                app.panel.$.find('.collapse').trigger('click');
+                const color = getComputedStyle(app.summary[0]).color;
+                const ellipsis = getComputedStyle(app.summary[0]).textOverflow === 'ellipsis' && Boolean(app.summary.attr('title'));
+                app.panel.$.find('.collapse').trigger('click');
+                const row = app.startInput.closest('.tp-start-row')[0];
+                const children = [...row.children].map(e => e.getBoundingClientRect());
+                const line = children.every(r => r.top < children[0].bottom && r.bottom > children[0].top) && row.scrollWidth <= row.clientWidth;
+                return { manual, next, choice, none, color, ellipsis, line };
+            }); assert(result.manual && result.next && result.choice && result.none && result.ellipsis && result.line); assert.equal(result.color, 'rgb(240, 230, 214)');
+            if (process.env.TP_SCREENSHOT) {
+                await page.evaluate(() => { app.toggleLock(0); app.toggleLock(3); app.selected = 59; app.render(); });
+                await page.screenshot({ path: process.env.TP_SCREENSHOT.replace(/\.png$/, '-panel.png') });
+                await page.evaluate(() => { app.panel.$.find('.collapse').trigger('click'); });
+                await page.screenshot({ path: process.env.TP_SCREENSHOT.replace(/\.png$/, '-collapsed.png') });
+                await page.evaluate(() => { app.panel.$.find('.collapse').trigger('click'); app.unlockAll(); });
+            }
+        });
+        await check('0.1.2: trzy natywne rozmiary, scrollbar oraz zapis wariantu i pauzy', async () => {
+            const result = await page.evaluate(async () => {
+                const heights = [], totals = [], cols = [];
+                for (let i = 0; i < 3; i++) {
+                    heights.push(app.scroll.height()); totals.push(app.panel.$.height()); cols.push(getComputedStyle(app.grid[0]).gridTemplateColumns.split(' ').length);
+                    app.panel.$.find('.toggle-size-button').trigger('click');
+                }
+                const bars = app.scroll.find('.scrollbar-wrapper').length; app.p.config.auto = true; await app.q.toggle(); app.save();
+                const key = app.key; const size = app.panel.$.attr('size-opt'); app.destroy(); app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak();
+                return { heights, totals, cols, bars, sizeSaved: app.panel.$.attr('size-opt') === size, paused: app.p.state === 'paused',
+                    saved: values.get(key).state === 'paused', locks: app.p.locked.length === 60 };
+            }); assert.deepEqual(result.heights, [220, 310, 140]); assert.equal(new Set(result.totals).size, 3); assert.deepEqual(result.cols, [7, 7, 7]);
+            assert.equal(result.bars, 1); assert(result.sizeSaved && result.paused && result.saved && result.locks); await page.evaluate(() => app.q.stop());
+        });
+        await page.evaluate(() => {
+            window.correctKey = key => key ? key.toUpperCase() : key; window.invertKeyInputOnSpecificMap = () => false;
+            window.isPl = () => true;
+            window.getAlreadyInitialised = () => true; window.ServerStorageData_default = { HOTKEYS: 'HOTKEYS' };
+            const original = Engine.serverStorage.get; window.nativeBindings = {};
+            Engine.serverStorage.get = (name, key) => name === 'HOTKEYS' ? nativeBindings[key] ?? null : original(name, key);
+            Engine.serverStorage.getDataLoaded = () => true;
+            Engine.settings = { getBlockInput: () => false }; Engine.tutorialManager = { checkBlockHotKeys: () => false };
+            window.TutorialData_default = { ON_FINISH_REQUIRE: { OPEN_WINDOW: 'open' }, ON_FINISH_TYPE: { REQUIRE: 'require' } };
+            Engine.tutorialManager.createTutorialDataTrigger = () => ({}); Engine.rajController = { parseObject() {} };
+            Engine.map.onmouseup = () => {}; Engine.battle.getShow = () => false; window.gameActions = 0;
+            Engine.widgetManager.widgetOnClick = () => gameActions++;
+            $.fn.getTipData = function () { return this.attr('title') || ''; };
+            Engine.interfaceItems.doInterfaceItemAcion = () => gameActions++; Engine.battle.endBattle = true;
+        });
+        for (const name of ['HeroDirectionData', 'HotKeysData', 'InputParser', 'HotKeys']) await page.addScriptTag({ content: moduleCode(name) });
+        await page.evaluate(() => { Engine.hotKeys = new HotKeys(); Engine.hotKeys.init(); });
+        await page.waitForTimeout(20);
+        await check('0.1.2: osobne natywne okno, przechwytywanie nie uruchamia InputParser', async () => {
+            await page.evaluate(() => { app.openConfig(); app.fields.manualKey[0].focus(); });
+            await page.keyboard.press('Enter');
+            await page.keyboard.press('Control+w'); await page.keyboard.press('Shift+q');
+            const result = await page.evaluate(() => ({ native: app.bindWindow.$.hasClass('transparent'),
+                title: app.bindWindow.$.find('.header-label').text().trim(), conflict: app.bindError.text(),
+                game: gameActions, move: input.getMoveDirection(), windows: document.querySelectorAll('.tp-bind').length }));
+            assert(result.native); assert.equal(result.title, 'Ustaw skrót klawiszowy'); assert(result.conflict.includes('Ten skrót jest już używany przez Margonem.'));
+            assert.equal(result.game, 0); assert.equal(result.move, null); assert.equal(result.windows, 1);
+            await page.evaluate(() => app.saveCapture()); assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
+            if (process.env.TP_SCREENSHOT) await page.screenshot({ path: process.env.TP_SCREENSHOT.replace(/\.png$/, '-bind.png') });
+        });
+        await check('0.1.2: modyfikator, konflikt dodatku, bezpośredni zapis i synchronizacja formularza', async () => {
+            await page.keyboard.down('Control'); assert.equal(await page.evaluate(() => Boolean(app.capture)), true); await page.keyboard.up('Control');
+            await page.keyboard.press('F10'); assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już używany przez teleporty.');
+            await page.evaluate(() => app.saveCapture()); assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
+            await page.keyboard.press('Shift+F8'); await page.evaluate(() => app.saveCapture());
+            const result = await page.evaluate(() => {
+                const saved = values.get(app.key).config.manualKey.code === 'F8' && app.p.config.manualKey.shift;
+                app.fields.interval.val(19); app.saveConfig();
+                return { saved, retained: app.p.config.manualKey.code === 'F8', closed: !app.bindWindow.isShow(), draft: app.draft.manualKey.code === 'F8' };
+            }); assert(Object.values(result).every(Boolean));
+        });
+        await check('0.1.2: Anuluj i Escape, czyszczenie wymaga Zapisz, jedno okno', async () => {
+            await page.evaluate(() => app.openCapture('manualKey')); await page.keyboard.press('F7'); await page.keyboard.press('Escape');
+            assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'F8');
+            await page.evaluate(() => app.openCapture('manualKey')); await page.locator('.tp-bind .tp-button').filter({ hasText: 'Wyczyść' }).click();
+            assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'F8');
+            await page.locator('.tp-bind .tp-button').filter({ hasText: 'Anuluj' }).click();
+            await page.evaluate(() => { app.openCapture('manualKey'); app.openCapture('autoKey'); app.openCapture('manualKey'); });
+            assert.equal(await page.locator('.tp-bind').count(), 1);
+            await page.locator('.tp-bind .tp-button').filter({ hasText: 'Wyczyść' }).click(); await page.locator('.tp-bind .tp-button').filter({ hasText: 'Zapisz' }).click();
+            assert.equal(await page.evaluate(() => app.p.config.manualKey), null);
+        });
+        await check('0.1.2: późniejsza zmiana natywnego skrótu blokuje akcję dodatku', async () => {
+            await page.evaluate(() => { app.openCapture('manualKey'); }); await page.keyboard.press('y'); await page.evaluate(() => app.saveCapture());
+            assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyY');
+            await page.evaluate(() => { app.configWindow.hide(); nativeBindings.hotAttackNearMob = 'Y'; Engine.hotKeys.rebuildHotKeys(); app.q.stop(); });
+            const before = await page.evaluate(() => requests.length); await page.locator('.tp-slot').first().click(); await page.keyboard.press('y');
+            assert.equal(await page.evaluate(() => requests.length), before); assert.equal(await page.evaluate(() => gameActions), 1);
+            await page.evaluate(() => { app.openCapture('manualKey'); }); await page.keyboard.press('Alt+y'); await page.evaluate(() => app.saveCapture());
+            assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
+            await page.keyboard.press('Escape'); assert.equal(await page.evaluate(() => gameActions), 1);
+            await page.evaluate(() => { app.destroy(); });
         });
         assert.deepEqual(errors, []);
         console.log(`Browser: ${checks.length} checks passed; native Window, ItemsManager, PointerDragDrop and API; controlled game/server fixture.`);

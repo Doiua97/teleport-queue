@@ -11,10 +11,10 @@ const item = (id, stat = 'teleport=1,2,3', extra = {}) => ({ id: String(id), hid
 function fixture() {
     const p = T.load(null);
     const messages = [], used = [], timers = new Map(), inventory = new Map();
-    let context = true, blocked = '', result = 'success', deferred = null;
+    let context = true, loaded = true, blocked = '', result = 'success', deferred = null;
     const a = {
-        save() {}, render() {}, message: s => messages.push(s), context: () => context, blocked: () => blocked,
-        item: r => { const i = inventory.get(r.id); return T.matches(i, r) ? i : null; }, ready: T.readyItem,
+        save() {}, render() {}, message: s => messages.push(s), context: () => context, loaded: () => loaded, blocked: () => blocked,
+        items: group => group.items.map(r => inventory.get(r.id)).filter((i, n) => T.matches(i, group.items[n])), ready: T.readyItem,
         use: i => {
             used.push(i.id);
             let resolve;
@@ -27,8 +27,8 @@ function fixture() {
     const clock = { setTimeout: (f, delay) => { timers.set(++seq, { f, delay }); return seq; }, clearTimeout: id => timers.delete(id) };
     const q = new T.Queue(p, a, clock);
     return { p, q, used, messages, timers, inventory,
-        put(slot, obj = item(slot)) { inventory.set(obj.id, obj); p.slots[slot - 1] = { id: obj.id, hid: obj.hid }; return obj; },
-        result: s => { result = s; }, context: b => { context = b; }, blocked: s => { blocked = s; },
+        put(slot, obj = item(slot)) { inventory.set(obj.id, obj); p.slots[slot - 1] = T.groupOf(obj); return obj; },
+        result: s => { result = s; }, context: b => { context = b; }, loaded: b => { loaded = b; }, blocked: s => { blocked = s; },
         settle: s => deferred(s) };
 }
 
@@ -61,21 +61,21 @@ test('cykl od 1 i od 12 wraca do własnego początku', () => {
     assert.equal(T.advance(1, 12), 12);
 });
 test('profil odrzuca uszkodzone dane i duplikaty oraz zatrzymuje aktywny automat', () => {
-    const p = T.load({ schema: 1, config: { auto: true, start: 12, interval: 0 }, state: 'active', next: 2,
-        slots: [{ id: 1, hid: 2 }, { id: 1, hid: 2 }, { id: 'undefined', hid: 2 }] });
+    const p = T.load({ schema: 2, config: { auto: true, start: 12, interval: 0 }, state: 'active', next: 2,
+        slots: [{ items: [{ id: 1, hid: 2 }] }, { items: [{ id: 1, hid: 2 }] }, { items: [{ id: 'undefined', hid: 2 }] }] });
     assert.equal(p.state, 'paused'); assert.equal(p.next, 12); assert.equal(p.config.interval, 120);
     assert.equal(p.slots.length, 60); assert.equal(p.slots.filter(Boolean).length, 1);
-    assert.throws(() => T.load({ schema: 2 }));
+    assert.throws(() => T.load({ schema: 1 }));
 });
 test('wersja zapisu i klucz postaci nie zależą od wersji kodu', () => {
-    assert.equal(T.profileKey({ worldConfig: { getWorldName: () => 'nerthus' }, hero: { d: { id: 42 } } }), 'margo-tp:v1:nerthus:42');
-    assert.equal(T.load({ schema: 1, next: 25 }).next, 25);
+    assert.equal(T.profileKey({ worldConfig: { getWorldName: () => 'nerthus' }, hero: { d: { id: 42 } } }), 'margo-tp:v2:nerthus:42');
+    assert.equal(T.load({ schema: 2, next: 25 }).next, 25);
 });
-test('profil 0.1.0 zachowuje 60 przypisań, konfigurację, wskaźnik i widget po aktualizacji', () => {
-    const original = { schema: 1, config: { ...T.defaults(), auto: true, start: 12, interval: 37,
+test('schema 2 zachowuje 60 grup, konfigurację i blokady bez modyfikacji wejścia', () => {
+    const original = { schema: 2, config: { ...T.defaults(), auto: true, start: 12, interval: 37,
         replaceLock: true, background: '#234567', border: '#abcdef', accent: '#765432' },
-        slots: Array.from({ length: 60 }, (_, i) => ({ id: String(i + 101), hid: `legacy-${i}` })),
-        next: 35, last: 34, state: 'active', widgetPlaced: true };
+        slots: Array.from({ length: 60 }, (_, i) => ({ items: [{ id: String(i + 101), hid: `member-${i}` }] })),
+        locked: Array.from({ length: 60 }, (_, i) => i % 2 === 0), next: 35, last: 34, state: 'active', widgetPlaced: true };
     const snapshot = structuredClone(original);
     assert.deepEqual(T.load(original), { ...snapshot, state: 'paused' });
     assert.deepEqual(original, snapshot);
@@ -190,8 +190,86 @@ test('loader przekazuje unsafeWindow i zasoby z odrębnego sandboxu bez globalne
 });
 test('metadane, adresy i wersje zasobów są gotowe do instalacji', () => {
     const text = fs.readFileSync(require.resolve('../teleporty.user.js'), 'utf8');
-    assert(text.includes('@version      0.1.1')); assert(text.includes('@author       Doiua'));
-    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.1`));
+    assert(text.includes('@version      0.1.2')); assert(text.includes('@author       Doiua'));
+    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.2`));
     assert(!text.includes('OWNER')); assert(!text.includes('REPO'));
     assert.equal((text.match(/@match /g) || []).length, 2);
+});
+
+test('blokady pozycji pomijane w cyklu, bez bezpośredniej próby i ostrzeżeń', async () => {
+    const f = fixture(); f.put(1); f.put(3); f.p.locked[0] = true;
+    await f.q.manual(1); assert.equal(f.used.length, 0); assert.equal(f.messages.length, 0);
+    await f.q.manual(); assert.deepEqual(f.used, ['3']); assert.equal(f.messages.length, 0);
+    f.q.stop(); f.p.config.auto = true; await f.q.toggle(); assert.deepEqual(f.used, ['3', '3']); f.q.stop();
+});
+test('grupa wybiera jednego gotowego członka, odrzucenie nie próbuje drugiego', async () => {
+    const f = fixture(); const a = f.put(1, item(1, 'teleport=1;amount=0'));
+    const b = item(2, 'teleport=1;amount=7'); const c = item(3, 'teleport=1;amount=5');
+    f.inventory.set(b.id, b); f.inventory.set(c.id, c); f.p.slots[0].items.push(T.groupOf(b).items[0], T.groupOf(c).items[0]);
+    f.result('rejected'); await f.q.manual(); assert.deepEqual(f.used, ['2']); assert.equal(f.p.next, 1);
+    f.inventory.delete(b.id); f.result('success'); await f.q.manual(1); assert.deepEqual(f.used, ['2', '3']);
+    assert.equal(a.parseStats().amount, '0');
+});
+test('po odpowiedzi i długim ładowaniu zaczyna się jeden pełny interwał', async () => {
+    const f = fixture(); f.put(1); f.p.config.auto = true; f.result('pending');
+    const wait = f.q.toggle(); f.loaded(false); f.q.wait(); f.settle('success'); await wait;
+    assert.equal(f.p.state, 'active'); assert.equal(f.p.next, 2); assert.equal(f.timers.size, 0);
+    f.q.ready(); assert.equal(f.timers.size, 0);
+    f.loaded(true); f.q.ready(); assert.equal(f.timers.size, 1);
+    assert.equal([...f.timers.values()][0].delay, 120000); assert.equal(f.used.length, 1);
+    f.q.ready(); assert.equal(f.timers.size, 1); f.q.stop();
+});
+test('gotowa mapa przed późną odpowiedzią nie planuje nowego użycia', async () => {
+    const f = fixture(); f.put(1); f.p.config.auto = true; f.result('pending'); const wait = f.q.toggle();
+    f.loaded(false); f.q.wait(); f.loaded(true); f.q.ready(); assert.equal(f.timers.size, 0);
+    f.settle('success'); await wait; assert.equal(f.timers.size, 1); f.q.stop();
+});
+test('rozpoczęcie ładowania usuwa wcześniejszy timer, STOP znosi oczekiwanie', async () => {
+    const f = fixture(); f.put(1); f.p.config.auto = true; await f.q.toggle(); assert.equal(f.timers.size, 1);
+    f.loaded(false); f.q.wait(); assert.equal(f.timers.size, 0); f.q.stop();
+    f.loaded(true); f.q.ready(); assert.equal(f.timers.size, 0); assert.equal(f.p.state, 'off');
+});
+test('grupowanie wymaga amount i pełnej zgodności celu oraz ograniczeń', () => {
+    const a = item(1, 'teleport=100,2,3,Ithan;amount=5;lvl=20', { tpl: 10 });
+    const b = item(2, 'lvl=20;amount=7;teleport=100,2,3,Ithan', { tpl: 10 });
+    assert.equal(T.groupKey(a), T.groupKey(b));
+    for (const [stat, tpl] of [['teleport=100,2,4,Ithan;amount=5;lvl=20', 10],
+        ['teleport=100,2,3,Ithan;amount=5;lvl=21', 10], ['teleport=100,2,3,Ithan;amount=5;lvl=20;binds=1', 10],
+        ['teleport=100,2,3,Ithan;amount=5;lvl=20', 11], ['custom_teleport=100,2,3,Ithan;amount=5;lvl=20', 10]]) {
+        assert.notEqual(T.groupKey(a), T.groupKey(item(3, stat, { tpl })));
+    }
+    assert.equal(T.groupKey(item(4, 'teleport=1;timelimit=180', { tpl: 10 })), null);
+    assert.notEqual(T.groupKey(item(5, 'custom_teleport=1,2,3,Ithan;amount=1', { tpl: 10 })),
+        T.groupKey(item(6, 'custom_teleport=4,2,3,Tristam;amount=1', { tpl: 10 })));
+});
+test('nazwy lokacji odczytywane ze statystyk, także z przecinkami i KC bez celu', () => {
+    assert.equal(T.destination(item(1, 'teleport=1,2,3,Ithan')), 'Ithan');
+    assert.equal(T.destination(item(1, 'custom_teleport=2,2,3, Las, za Ithan')), 'Las, za Ithan');
+    assert.equal(T.destination(item(1, 'custom_teleport')), 'wybór miejsca');
+});
+test('blokady zapisane osobno na postaci, schema 1 pozostaje poza nowym zapisem', () => {
+    const p = T.load(null); p.locked[59] = true; p.config.replaceLock = false;
+    const copy = T.load(p); assert(copy.locked[59]); assert.equal(copy.locked.length, 60);
+    assert.equal(copy.config.replaceLock, false); assert.throws(() => T.load({ schema: 1 }));
+    const key = world => T.profileKey({ worldConfig: { getWorldName: () => world }, hero: { d: { id: 42 } } });
+    assert.notEqual(key('nerthus'), key('nyras'));
+});
+const key = (code, extra = {}) => ({ code, ctrl: false, alt: false, shift: false, meta: false, ...extra });
+const hotEngine = () => ({ hotKeys: { hotKeys: { Q: 'attack', F9: 'other' },
+    getSortedHotKeys: () => [['Q', 'attack', false, 'fight']], getKeyByClbName: name => name === 'move_up' ? 'W' : '' },
+    widgetManager: { getDefaultWidgetSet: () => ({}) } });
+test('natywne konflikty: modyfikatory nie usuwają ruchu i zarezerwowanych akcji', () => {
+    const e = hotEngine();
+    for (const code of ['KeyW', 'ArrowLeft', 'Digit1', 'Numpad7', 'Enter', 'Escape', 'Tab']) {
+        for (const mod of [{}, { ctrl: true }, { alt: true }, { meta: true }]) assert(T.gameConflict(key(code, mod), e));
+    }
+    assert(T.gameConflict(key('KeyQ', { shift: true }), e)); assert(T.gameConflict(key('KeyQ', { alt: true }), e));
+    assert.equal(T.gameConflict(key('KeyQ', { ctrl: true }), e), null);
+    assert.equal(T.gameConflict(key('Digit1', { shift: true }), e), null);
+});
+test('normalizacja używa rzeczywistego key; konflikt może powstać po zapisaniu', () => {
+    const e = hotEngine(); const k = key('KeyZ', { key: 'y' }); e.hotKeys.hotKeys.Y = 'other';
+    assert(T.gameConflict(k, e)); assert.equal(T.nativeKey(key('KeyZ'), { key: 'ą' }), 'Ą');
+    delete e.hotKeys.hotKeys.F9; assert.equal(T.gameConflict(key('F9'), e), null);
+    e.hotKeys.hotKeys.F9 = 'action'; assert(T.gameConflict(key('F9'), e));
 });

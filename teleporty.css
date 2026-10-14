@@ -8,7 +8,7 @@
     background-color: var(--tp-background);
     box-shadow: 0 0 0 1px #010101, 0 0 0 2px var(--tp-border), 0 0 0 3px #0c0d0d, 2px 2px 3px 3px rgba(12, 13, 13, .4);
 }
-.tp-body, .tp-config-body { color: #f0e6d6; font-size: 12px; line-height: 1.5; }
+.tp-body, .tp-config-body, .tp-bind-body { color: #f0e6d6; font-size: 12px; line-height: 1.5; }
 .tp-status { font-weight: bold; margin-bottom: 4px; }
 .tp-active .tp-status { color: #b6efa1; }
 .tp-paused .tp-status, .tp-pending { color: #ffe398; }
@@ -18,7 +18,9 @@
 .tp-button { flex: 0 0 auto; }
 .tp-button .label { padding: 0 6px; }
 .tp-button.disable { opacity: .45; pointer-events: none; }
-.tp-scroll { height: 220px; max-height: calc(var(--tp-max-height, 90vh) - 210px); }
+.tp-scroll { height: 220px; max-height: max(36px, calc(var(--tp-max-height, 90vh) - 210px)); }
+.tp-panel[size-opt="0"] .tp-scroll { height: 140px; }
+.tp-panel[size-opt="2"] .tp-scroll { height: 310px; }
 .tp-config-scroll { height: min(590px, var(--tp-max-height, 75vh)); }
 .tp-scroll > .scroll-pane, .tp-config-scroll > .scroll-pane { padding-right: 12px; box-sizing: border-box; }
 .tp-grid { display: grid; grid-template-columns: repeat(7, 36px); gap: 3px; justify-content: center; padding: 2px; }
@@ -28,12 +30,17 @@
 .tp-slot.tp-unavailable .canvas-icon { opacity: .38; }
 .tp-number { position: absolute; z-index: 2; top: 1px; left: 2px; font-size: 10px; line-height: 12px; color: #fff; text-shadow: 1px 1px #000, -1px -1px #000; pointer-events: none; }
 .tp-cooldown { position: absolute; bottom: 2px; left: 0; right: 0; z-index: 3; text-align: center; color: #ffe3a6; text-shadow: 1px 1px #000; pointer-events: none; font-size: 11px; }
-.tp-count, .tp-selection { margin-top: 6px; }
-.tp-start-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.tp-start-row .tp-number-input { width: 52px; }
+.tp-count { margin-top: 6px; }
+.tp-start-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; margin-top: 7px; white-space: nowrap; }
+.tp-start-row .tp-number-input { width: 40px; flex: 0 0 40px; }
+.tp-start-row .tp-button .label { padding: 0 4px; }
+.tp-start-row .tp-selection { margin-right: auto; }
+.tp-import-row { display: flex; gap: 5px; margin-top: 8px; }
+.tp-import-row .tp-button .label { padding: 0 4px; }
 .tp-window .tp-number-input input.default { color: #fff; width: 100%; font-size: 12px; }
-.tp-summary { display: none; position: relative; font-size: 12px; margin-left: 5px; }
-.tp-panel.window--collapsed .tp-summary { display: inline; }
+.tp-summary { display: none; position: absolute; left: 154px; right: 28px; top: 0; color: #f0e6d6; font-size: 12px; line-height: 28px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-panel.window--collapsed .tp-summary { display: block; }
+.tp-panel.window--collapsed .header-label { position: absolute; left: 91px; top: 0; width: 58px; margin: 0; }
 .tp-panel.window--collapsed .tp-body, .tp-config.window--collapsed .tp-config-scroll { display: none; }
 .tp-section { margin: 12px 0 6px; color: #f5d889; font-weight: bold; }
 .tp-field { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 26px; margin: 5px 0; }
@@ -45,3 +52,9 @@
 .tp-form-note { margin: 7px 0 2px; color: #e1d7c5; }
 .tp-widget .icon { background-image: var(--tp-widget-icon) !important; background-size: 32px 32px; background-position: center; background-repeat: no-repeat; }
 .tp-drag { width: 32px; height: 32px; pointer-events: none; }
+.tp-locked .tp-icon .canvas-icon { opacity: .55; }
+.tp-locked::after { content: ''; position: absolute; right: 3px; top: 9px; width: 8px; height: 7px; border: 1px solid #f0d493; background: #34302a; border-radius: 1px; z-index: 4; pointer-events: none; }
+.tp-locked::before { content: ''; position: absolute; right: 5px; top: 5px; width: 4px; height: 5px; border: 1px solid #f0d493; border-radius: 4px 4px 0 0; z-index: 4; pointer-events: none; }
+.tp-key-preview { font-size: 22px; font-weight: bold; margin: 12px 0; overflow-wrap: anywhere; }
+.tp-key-error { color: #ffe398; min-height: 36px; }
+.tp-bind.window--collapsed .tp-bind-body { display: none; }
