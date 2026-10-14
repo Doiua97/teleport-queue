@@ -151,6 +151,8 @@ Playwright musi być dostępny w Node. Opcjonalnie TP_PROBE=1 uruchamia tylko pi
 
 Publikacja odbywa się w dwóch commitach: najpierw core/CSS/testy/dokumentacja, potem loader 0.1.3 przypięty do opublikowanego SHA nowych zasobów. UpdateURL i downloadURL pozostają na main. Loader i każdy jego @require/@resource są weryfikowane przez publiczny HTTP i porównanie zawartości z lokalnym commitem Git. Nie pozostają odwołania do zasobów 0.1.2. SHA i bezpośredni link instalacji są przekazywane w końcowej odpowiedzi.
 
+Commit zasobów: [`ff0af1d7f4cc495b03d53f204085f8ef59eef21a`](https://github.com/Doiua97/teleport-queue/commit/ff0af1d7f4cc495b03d53f204085f8ef59eef21a). Loader 0.1.3 wskazuje ten SHA dla core, CSS i ikony, z oznaczeniem `?v=0.1.3`. Po wysłaniu zasobów wszystkie trzy przypięte adresy zwróciły HTTP 200, a ich SHA-256 zgadzały się z zawartością lokalnego commita. Odrębny commit loadera i dokumentacji kończy publikację.
+
 Nie instalowano dodatku na prawdziwej postaci. Do potwierdzenia przez użytkownika:
 
 1. Tampermonkey pokazuje 0.1.3 i pobiera cały nowy komplet. Dotychczasowe grupy, kłódki, kolory, skróty i początek cyklu są zachowane.
