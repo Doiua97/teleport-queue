@@ -71,6 +71,15 @@ test('wersja zapisu i klucz postaci nie zależą od wersji kodu', () => {
     assert.equal(T.profileKey({ worldConfig: { getWorldName: () => 'nerthus' }, hero: { d: { id: 42 } } }), 'margo-tp:v1:nerthus:42');
     assert.equal(T.load({ schema: 1, next: 25 }).next, 25);
 });
+test('profil 0.1.0 zachowuje 60 przypisań, konfigurację, wskaźnik i widget po aktualizacji', () => {
+    const original = { schema: 1, config: { ...T.defaults(), auto: true, start: 12, interval: 37,
+        replaceLock: true, background: '#234567', border: '#abcdef', accent: '#765432' },
+        slots: Array.from({ length: 60 }, (_, i) => ({ id: String(i + 101), hid: `legacy-${i}` })),
+        next: 35, last: 34, state: 'active', widgetPlaced: true };
+    const snapshot = structuredClone(original);
+    assert.deepEqual(T.load(original), { ...snapshot, state: 'paused' });
+    assert.deepEqual(original, snapshot);
+});
 test('kombinacje używają code i wszystkich modyfikatorów', () => {
     const key = T.keyOf({ code: 'KeyQ', ctrlKey: true, altKey: false, shiftKey: true, metaKey: false });
     assert(T.sameKey(key, { code: 'KeyQ', ctrl: true, alt: false, shift: true, meta: false }));
@@ -137,6 +146,22 @@ test('pusta kolejka i brak gotowych wyświetlają jeden komunikat i zachowują w
     f.put(5, item(5, 'teleport=1;amount=0')); f.messages.length = 0;
     await f.q.manual(); assert.deepEqual(f.messages, ['Brak gotowego teleportu.']); assert.equal(f.p.next, 1);
 });
+test('pusta kolejka ma pierwszeństwo przed blokadą gry', async () => {
+    const f = fixture(); f.blocked('Rzemiosło'); await f.q.manual();
+    assert.deepEqual(f.messages, ['Brak teleportów w kolejce.']); assert.equal(f.used.length, 0);
+});
+test('same cooldowny mają pierwszeństwo przed blokadą, a gotowy przedmiot jest nadal chroniony', async () => {
+    const f = fixture(); f.blocked('Rzemiosło');
+    const i = f.put(1, item(1, `teleport=1;timelimit=180,${Math.ceil(Date.now() / 1000) + 100}`));
+    await f.q.manual(); assert.deepEqual(f.messages, ['Brak gotowego teleportu.']); assert.equal(f.used.length, 0);
+    f.put(1, item(i.id)); f.messages.length = 0; await f.q.manual();
+    assert.deepEqual(f.messages, ['Rzemiosło']); assert.equal(f.used.length, 0);
+});
+test('odpowiedź niejednoznaczna zwalnia blokadę kolejnej świadomej próby', async () => {
+    const f = fixture(); f.put(1); f.result('uncertain'); await f.q.manual();
+    assert.equal(f.q.flight, null); f.result('success'); await f.q.manual();
+    assert.equal(f.used.length, 2); assert.equal(f.p.next, 2);
+});
 test('ten sam tpl lub nazwa nie zastępują brakującego id/hid', async () => {
     const f = fixture(); f.put(4, item(4, 'teleport=1', { tpl: 10, name: 'KC' }));
     f.inventory.delete('4'); f.inventory.set('5', item(5, 'teleport=1', { tpl: 10, name: 'KC' }));
@@ -165,8 +190,8 @@ test('loader przekazuje unsafeWindow i zasoby z odrębnego sandboxu bez globalne
 });
 test('metadane, adresy i wersje zasobów są gotowe do instalacji', () => {
     const text = fs.readFileSync(require.resolve('../teleporty.user.js'), 'utf8');
-    assert(text.includes('@version      0.1.0')); assert(text.includes('@author       Doiua'));
-    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.0`));
+    assert(text.includes('@version      0.1.1')); assert(text.includes('@author       Doiua'));
+    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.1`));
     assert(!text.includes('OWNER')); assert(!text.includes('REPO'));
     assert.equal((text.match(/@match /g) || []).length, 2);
 });

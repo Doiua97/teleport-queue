@@ -1,10 +1,30 @@
-# Raport — Teleporty 0.1.0
+# Raport — Teleporty 0.1.1
 
 Data: 14 października 2026. Autor dodatku: Doiua.
 
 Projekt lokalny: `E:\dodatki\margonem-teleporty`.
 
 Repozytorium: https://github.com/Doiua97/teleport-queue, gałąź `main`.
+
+## Naprawy względem 0.1.0 i ich przyczyny
+
+| Problem | Potwierdzona przyczyna | Zmiana w 0.1.1 |
+| --- | --- | --- |
+| Teleporty zablokowane także poza rzemiosłem | `Engine.crafting` jest stałą instancją utworzoną przy inicjalizacji. Warunek sprawdzał obecność obiektu. | Sprawdzane są natywne `crafting.isOpen()` i sześć aktywnych czynności z `isCraftingOpen()`. Pozostałe zabezpieczenia zachowano. |
+| Nieprawidłowy komunikat dla pustej kolejki lub samych cooldownów | `Queue.attempt()` sprawdzał zajętość przed zawartością kolejki. | Pusta kolejka i brak gotowego przedmiotu mają własny komunikat. Rzeczywista blokada jest sprawdzana przed wysłaniem żądania. Podczas ładowania nie są czyszczone przypisania. |
+| Checkbox blokady zastępowania pozornie nie działa | Lokalnie odtworzono zasłanianie konfiguracji przez panel: `openConfig()` nie przenosił okna na wierzch. Kliknięcie koła zębatego mogło ponadto przejść do rodzica, którego natywny handler znów podnosił panel. Wcześniejsze testy ustawień wywoływały metody programowo i nie sprawdzały trafienia myszą. | Otwieranie korzysta z `setWndOnPeak()` i zatrzymuje propagację kliknięcia koła zębatego. Szablon checkboxa ma jednoznaczne `id`/`for`, zapis odczytuje właściwy input. Zajęty slot pozostaje chroniony przez `assign()`. |
+| Dwie ścieżki upuszczenia i niewidoczne sloty | Obsługa droppable i przechwycenie pointerup miały osobne fragmenty kodu. Przechwycenie sprawdzało cały panel, więc mogło trafić w geometryczny prostokąt slotu ukrytego za obszarem przewijania, np. nad stopką. | Obie ścieżki przechodzą przez `drop()` i tę samą kontrolę `assign()`. `hitSlot()` ogranicza trafienie do widocznego obszaru slotów. Anulowanie natywnego przeciągania nadal chroni przed reakcją mapy. |
+| Wyłączenie automatu nie zatrzymuje go od razu | W 0.1.0 checkbox był wyłącznie wartością formularza; STOP następował dopiero w `saveConfig()`. | Zdarzenie `change` natychmiast synchronizuje ustawienie i zapis. Odznaczenie wykonuje STOP, kasuje timer, ustawia `off` i resetuje wskaźnik. Zaznaczenie nie rozpoczyna używania. |
+| Własny pasek i ramki slotów | Panel miał `overflow:auto` i narysowane tło/obramowanie komórek. | Oba okna korzystają z `scroll-wrapper` / `scroll-pane` i `addScrollBar({track:true})`. Sloty mają `item-slot interface-element-one-item-slot`, wymiary 36 px i oryginalne wyrównanie ikony 2 px. Siedem kolumn mieści się w panelu szerokości 320 px. |
+| Formularze niespójne z NI | Pola powstawały jako surowe `<input>`. | `API.Templates.get()` pobiera `input`, `ni-input-text`, `checkbox-custom`, `c-color-picker` i `button`. Checkboxy mają obsługę klawiatury i fokusu. Nie skopiowano klas komponentów. |
+| Drobny tekst i podwójna ramka okna | Etykiety miały 10–11 px, a body własne tło i obramowanie wewnątrz natywnej ramki. | Etykiety mają co najmniej 12 px, jasny kolor i wyrównanie. Usunięto wewnętrzne tło/ramkę; kolory ustawiają wyłącznie istniejący natywny `border-image`. Przezroczystość pozostaje sterowana przez klienta. |
+| Brak informacji o trwającym żądaniu | Przyciski mogły być zablokowane bez stałej informacji w panelu. | Panel pokazuje oczekiwanie na odpowiedź i osobną informację przy braku odpowiedzi. Odpowiedź niejednoznaczna zwalnia blokadę po rozstrzygnięciu, bez przesuwania kolejki. |
+
+Audyt pozostałych warunków: `Engine.battle` jest stałą instancją, więc nadal sprawdzane jest `isBattleShow()`. `interfaceItems` także jest kontrolerem i sprawdzana jest metoda stanu. W dostarczonym źródle dialog, handel, sklep, depozyt, poczta i aukcje są tworzone przy ich otwarciu oraz zerowane (`false` lub `null`) przy zamknięciu; ich warunki pozostają właściwe. Zachowano śmierć oraz rzeczywiste wpisy `Engine.lock`, w tym CAPTCHA.
+
+Przeanalizowano również InputComponent, Checkbox, NativeColorPicker i FormBuilder. Klasy pozostają w zakresie modułów klienta; dostępne szablony umożliwiają zastosowanie ich rzeczywistej struktury i stylów bez kopiowania implementacji. Istniejący publiczny helper `createNiInput` także był uwzględniony w analizie; dodatek wykorzystuje bezpośrednio udostępnione szablony, z własnymi ograniczeniami zakresów i identyfikatorami pól.
+
+Schemat zapisu nadal ma numer `1`, a klucz profilu nadal ma postać `margo-tp:v1:<world>:<characterId>`. Nie zmieniono `tp_queue`, `TP_PANEL_<world>_<id>`, `TP_CONFIG_<world>_<id>` ani `TP_QUEUE_VIEW`. Nie ma migracji kasującej profile. Loader i wszystkie wersjonowane adresy zasobów mają `0.1.1`.
 
 ## Zakres implementacji
 
@@ -14,7 +34,7 @@ Dodatek implementuje:
 
 - Widget `tp_queue` w natywnych belkach, zapis położenia przez `Engine.serverStorage`, oczekiwanie na wolne miejsce i respektowanie usunięcia w edytorze.
 - Dwa natywne transparentne okna z oddzielnymi nazwami `TP_PANEL_<world>_<id>` i `TP_CONFIG_<world>_<id>`, pozycją, widocznością, zwijaniem, przezroczystością i wariantem rozmiaru obsługiwanym przez klienta.
-- 60 numerowanych slotów w siedmiu kolumnach, ikony 32 px, komórki 34 px, odstępy 3 px, przewijany obszar 220 px i szerokość panelu 306 px.
+- 60 numerowanych slotów w siedmiu kolumnach, ikony 32 px, natywne komórki 36 px, odstępy 3 px, przewijany obszar 220 px i szerokość panelu 320 px.
 - Widoki przedmiotów tworzone przez `ItemsManager`, natywny Canvas, jakość, ilość, tooltip i własną nakładkę pozostałego odnowienia. Ukryty panel nie odświeża nakładek.
 - Przydzielanie z torby, blokadę zastępowania, zamianę i przenoszenie skrótów, usunięcie przez PPM lub przeciągnięcie na zewnątrz, podwójne kliknięcie i opcję ręcznego użycia w menu.
 - Rozpoznawanie po `cl=32` i obecności `teleport` albo `custom_teleport`, identyfikację przez `id` i `hid`, bez zamienników po nazwie lub `tpl`.
@@ -25,7 +45,7 @@ Dodatek implementuje:
 - Pauzę podczas walki, śmierci, dialogu, handlu, innych czynności i blokad klienta. Własna zmiana mapy może zakończyć ładowanie bez zatrzymywania automatu; inne blokady nadal mają pierwszeństwo.
 - Natywną obsługę KC bez celu, zachowanie znalezionego slotu oraz pauzę automatu bez wybierania miejsca za gracza.
 - Skróty oparte na `KeyboardEvent.code` i modyfikatorach, ignorowanie przytrzymania, pól tekstowych i przechwytywania skrótu, wykrywanie konfliktu pomiędzy skrótami dodatku.
-- Konfigurację zapisywaną przez przycisk Zapisz, kolory, przywracanie ustawień domyślnych bez kasowania slotów.
+- Konfigurację zapisywaną przez przycisk Zapisz, z wyjątkiem natychmiastowego przełącznika automatu; kolory i przywracanie ustawień domyślnych bez kasowania slotów. Przywrócenie domyślnych ustawień również zatrzymuje automat.
 - Lokalne profile przez `GM_getValue` / `GM_setValue`, zachowanie wskaźnika po odświeżeniu i wznowienie wcześniejszego automatu wyłącznie z pauzy.
 - Kontrolowane timeouty, timery i usuwanie callbacków, widoków oraz adapterów podczas zamknięcia kontekstu lub zmiany postaci.
 
@@ -80,15 +100,19 @@ Interwał przyjmuje całkowite wartości od 1 do 2 147 483 sekund. Górna granic
 
 ## Wyniki lokalne
 
-- **27/27 testów Node:** rozpoznanie typów i KC, cooldowny, ilość/ważność/blokada, cykle, uszkodzone profile, osobny klucz świata i postaci, skróty, pojedyncze żądanie, sukces/błąd/niejednoznaczność/timeout, pauza KC, czasowanie, STOP, późna odpowiedź, zmiana postaci i początku, brak gotowych przedmiotów, brak zamienników, pauza oraz destroy. Osobny kontekst `vm` sprawdza loader bez globalnego `Engine` i przekazanie `unsafeWindow` oraz zasobów.
-- **18/18 scenariuszy przeglądarkowych:** Microsoft Edge w trybie headless. Użyto oryginalnych modułów Window, WindowManager, WindowManageOpacity, WindowManageSize, StorageFuncWindow, ItemsManager, PointerDragDrop i API, odczytywanych przy uruchomieniu testu. WidgetManager, obiekty przedmiotów, pozostałe stany Engine i odpowiedzi serwera były kontrolowanymi atrapami.
+- **31/31 testów Node:** rozpoznanie typów i KC, cooldowny, ilość/ważność/blokada, cykle, uszkodzone profile, osobny klucz świata i postaci, skróty, pojedyncze żądanie, sukces/błąd/niejednoznaczność/timeout, pauza KC, czasowanie, STOP, późna odpowiedź, zmiana postaci i początku, brak gotowych przedmiotów, brak zamienników, pauza oraz destroy. Dodano pierwszeństwo komunikatów pustej kolejki/cooldownów, odblokowanie po niejednoznacznej odpowiedzi i zachowanie całego profilu 0.1.0. Osobny kontekst `vm` sprawdza loader bez globalnego `Engine` i przekazanie `unsafeWindow` oraz zasobów.
+- **29/29 scenariuszy przeglądarkowych:** Microsoft Edge w trybie headless. Użyto oryginalnych modułów Window, WindowManager, WindowManageOpacity, WindowManageSize, StorageFuncWindow, ItemsManager, PointerDragDrop, AddScrollBar, API, Crafting i CraftingWindow, odczytywanych przy uruchomieniu testu. Rzeczywista instancja Crafting i jej natywne okno były obecne podczas wszystkich scenariuszy; kontrolery zależne ItemCraft i Tabs pozostawały atrapami. WidgetManager, obiekty przedmiotów, pozostałe stany Engine i odpowiedzi serwera były kontrolowanymi atrapami.
 - Przeglądarka potwierdziła: dwa okna, 60 slotów i szerokość; przydziały/duplikaty/blokadę/zamianę/widoki; ilość i odtworzenie obiektu; wyniki użycia; KC; STOP; klawisze; własną zmianę mapy i blokadę walki; ukrycie panelu i konfigurację; przezroczystość/zwijanie/pozycję/PPM; odbudowę i usunięcie widgetu; oba kierunki przeciągania bez wywołania strefy mapy; mniejszy ekran i zoom; zapis konfiguracji; pełne belki; cleanup i powrót profilu; oczekiwanie loadera i jednokrotny start.
-- Sprawdzono składnię obu plików JavaScript. Ikona ma rzeczywiste 32 × 32 px, format PNG i kanał alfa. Wizualnie obejrzano panel ze stylem dostarczonego klienta; zasoby graficzne samej gry były w lokalnym teście zablokowane.
+- Nowe scenariusze sprawdzają także rzeczywiste kliknięcia przycisków, F9/F10, podwójny klik, PPM → Użyj, wznowienie i upływ interwału 1 s przy zamkniętym Crafting; autopauzę po otwarciu natywnego okna i sześciu czynności; kółko myszy i fizyczne przeciąganie natywnego suwaka; podniesienie konfiguracji po kliknięciu koła zębatego; zapis blokady przez kliknięcie label i Zapisz; zajęty/pusty slot i zamianę wewnętrzną przy obu wartościach blokady; brak podwójnego `assign()`; natychmiastowe wyłączenie active/paused bez Zapisz; blokadę F10 i odblokowanie F9; fokus oraz Space/Enter na checkboxie.
+- Ścieżka przechwycenia `pointerup` i zamiana wewnętrzna używają fizycznych gestów myszy w przeglądarce. Dodatkowo rejestrowany w oryginalnym `pointerDroppable` callback jest uruchamiany z rzeczywistym elementem jQuery, aby niezależnie sprawdzić jego politykę zastępowania. Nie udaje to osobnego testu serwera ani instalacji Tampermonkey.
+- Sprawdzono składnię obu plików JavaScript. Ikona zachowała 32 × 32 px, PNG i kanał alfa. Obejrzano oba okna z oryginalnym CSS oraz publicznymi, statycznymi grafikami `/img/` klienta. Plików graficznych klienta nie zapisano w repozytorium. Podglądy lokalne znajdują się poza projektem, w `E:\dodatki\tp-analysis\panel-0.1.1-forms.png`; widoczne przedmioty są wyłącznie danymi testowymi.
 - Nie zainstalowano userscriptu w Tampermonkey i nie wysłano żądań na rzeczywistym koncie gry.
 
 ## Dokładne sprawdzenia pozostające w działającym Margonem
 
 Poniższe punkty nie są oznaczone jako zaliczone w grze. Część logiki ma pokrycie lokalne, ale nadal wymaga oceny na prawdziwym kliencie i serwerze.
+
+Priorytet dla weryfikacji 0.1.1: najpierw otworzyć konfigurację po kliknięciu slotu, włączyć blokadę i nacisnąć Zapisz, a następnie sprawdzić chroniony/pusty slot oraz zamianę wewnętrzną. Potem włączyć automat i odznaczyć checkbox bez Zapisz — oczekiwane są `off`, powrót do początku i brak następnej próby. Każdą z ośmiu dróg użycia przetestować na gotowym teleporcie przy zamkniętym rzemiośle, a po jego otwarciu sprawdzić blokadę i pauzę. Udane użycie na serwerze nadal wymaga potwierdzenia opisanej ścieżki `ITEM_USED` / `checkTeleport` / `t=reload`.
 
 1. Instalacja w Tampermonkey: pobranie core/CSS/PNG z opublikowanych adresów, dostęp do `unsafeWindow`, jednokrotne uruchomienie w kliencie osadzonym w ramce oraz kompatybilność przeglądarki.
 2. Pierwsze umieszczenie widgetu przez rzeczywisty WidgetManager i serverStorage: wolne miejsce, całkowicie pełne belki, późniejsze zwolnienie miejsca, przenoszenie w edytorze, odświeżenie, usunięcie, odbudowa i reset definicji, zmiana rozdzielczości oraz ewentualny błąd zapisu serwera.

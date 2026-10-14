@@ -116,10 +116,9 @@
         async attempt(explicit) {
             if (!this.alive || this.flight || !this.a.context()) return;
             this.clear();
-            const blocked = this.a.blocked();
-            if (blocked) {
-                if (this.p.state === 'active') this.pause(blocked);
-                else this.a.message(blocked);
+            if (!this.p.slots.some(Boolean)) {
+                this.a.message('Brak teleportów w kolejce.');
+                this.schedule();
                 return;
             }
             if (this.a.loaded && !this.a.loaded()) { this.schedule(); return; }
@@ -140,6 +139,12 @@
             if (!candidate) {
                 this.a.message(this.p.slots.some(Boolean) ? 'Brak gotowego teleportu.' : 'Brak teleportów w kolejce.');
                 this.schedule();
+                return;
+            }
+            const blocked = this.a.blocked();
+            if (blocked) {
+                if (this.p.state === 'active') this.pause(blocked);
+                else this.a.message(blocked);
                 return;
             }
             const { item } = candidate;
@@ -203,7 +208,7 @@
             && e.items?.getItemById && e.heroEquipment?.getHItems && e.heroEquipment.sendUseRequest
             && e.items.getFetchPackageController && !Object.keys(e.items.getFetchPackageController()).length
             && win.API?.addCallbackToEvent && win.API.Templates?.get && win.jQuery?.fn?.pointerDraggable
-            && win.jQuery.fn.pointerDroppable);
+            && win.jQuery.fn.pointerDroppable && win.jQuery.fn.addScrollBar);
     }
 
     class App {
@@ -260,7 +265,10 @@
         blocked() {
             const e = this.e;
             if (e.hero.d.hp <= 0 || e.dead || e.lock.check('dead')) return 'Postać nie może teraz użyć teleportu.';
-            if (e.battle?.isBattleShow() || e.dialogue || e.trade || e.shop || e.depo || e.mails || e.auctions || e.crafting
+            const crafting = e.crafting;
+            const craftOpen = crafting?.isOpen?.() || ['salvage', 'enhancement', 'extraction',
+                'socket_enchantment', 'socket_extraction', 'socket_composition'].some(name => crafting?.[name]);
+            if (e.battle?.isBattleShow() || e.dialogue || e.trade || e.shop || e.depo || e.mails || e.auctions || craftOpen
                 || e.interfaceItems?.isInterfaceItemsDisable?.()) return 'Dokończ obecną czynność i wznów teleporty.';
             if (e.lock.check() && !(this.ownTravel && e.lock.list.every(name => name === 'change_location')))
                 return 'Gra czeka na Twoją reakcję. Wznów teleporty, gdy będzie można grać dalej.';
@@ -370,6 +378,7 @@
             });
             if (changed) this.save();
             this.render();
+            this.updateScroll();
         }
         assign(index, item) {
             if (!this.context() || !teleport(item) || !this.item(identity(item))) return;
@@ -380,6 +389,21 @@
             }
             this.p.slots[index] = identity(item);
             this.changedSlots(index);
+        }
+        drop(index, source) {
+            if (!this.context()) return;
+            if (source.hasClass('tp-slot')) {
+                source.data('tp-dropped', true);
+                this.swap(Number(source.attr('data-tp-slot')), index);
+            } else if (source.hasClass('inventory-item')) this.assign(index, source.data('item'));
+        }
+        hitSlot(x, y) {
+            const r = this.scroll[0].getBoundingClientRect();
+            if (x < r.left || x > r.right || y < r.top || y > r.bottom) return -1;
+            return this.cells.findIndex(cell => {
+                const r = cell[0].getBoundingClientRect();
+                return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+            });
         }
         swap(a, b) {
             if (!this.context() || a === b) return;
@@ -396,6 +420,7 @@
             for (const i of indices) this.renderSlot(i, true);
             this.save();
             this.render();
+            this.updateScroll();
         }
         button(text, fn, color = 'green') {
             const b = this.api.Templates.get('button').addClass(`small ${color} tp-button`)
@@ -404,6 +429,24 @@
             const run = e => { if (!b.hasClass('disable')) { e.preventDefault(); fn(); } };
             b.on('click.tp', run).on('keydown.tp', e => { if (['Enter', 'Space'].includes(e.code)) run(e); });
             return b;
+        }
+        number(name, value, attrs, template = 'ni-input-text') {
+            const control = this.api.Templates.get(template).addClass('tp-number-input');
+            const input = control.find('input').attr({ id: `${this.panel?._nameWindow || this.key}_${name}`, name,
+                type: 'number', step: 1, ...attrs }).val(value);
+            control.find('.clear-cross').remove();
+            return { control, input };
+        }
+        scrollBar(scroll) {
+            scroll.addScrollBar({ track: true });
+            this.clean.push(() => {
+                scroll.find('.handle').pointerDraggable('cancel').pointerDraggable('destroy');
+                scroll.off();
+            });
+        }
+        updateScroll() {
+            this.scroll?.trigger('update');
+            this.configScroll?.trigger('update');
         }
         window(kind, title, content, width) {
             const name = `TP_${kind}_${encodeURIComponent(this.e.worldConfig.getWorldName())}_${this.e.hero.d.id}`;
@@ -416,7 +459,7 @@
                 manageCollapse: { defaultVal: false, callbackFn: () => this.fit() },
                 manageSize: { sizeArray: [{ w: width, h: 'auto' }, { w: width, h: 'auto', maxH: '90vh' }],
                     options: { defaultSizeIndex: 0 }, callback: () => this.fit() },
-                ...(kind === 'PANEL' ? { widget: WIDGET, manageConfiguration: { fn: () => this.openConfig() } } : {}),
+                ...(kind === 'PANEL' ? { widget: WIDGET, manageConfiguration: { fn: e => this.openConfig(e) } } : {}),
                 onclose: function () { this.hide(); },
                 onstopdrag: () => this.fit()
             });
@@ -441,7 +484,8 @@
             const controls = $('<div>').addClass('tp-controls').append(this.manualButton, this.autoButton, this.stopButton);
             this.grid = $('<div>').addClass('tp-grid');
             this.cells = Array.from({ length: SIZE }, (_, i) => {
-                const cell = $('<div>').addClass('tp-slot').attr({ 'data-tp-slot': i, tabindex: 0, 'aria-label': `Slot ${i + 1}` });
+                const cell = $('<div>').addClass('item-slot interface-element-one-item-slot tp-slot')
+                    .attr({ 'data-tp-slot': i, tabindex: 0, 'aria-label': `Slot ${i + 1}` });
                 cell.append($('<span>').addClass('tp-number').text(i + 1), $('<span>').addClass('tp-cooldown'));
                 cell.on('click.tp', () => { this.selected = i; this.render(); });
                 cell.on('dblclick.tp', () => { if (this.p.config.doubleClick) void this.q.manual(i + 1); });
@@ -457,12 +501,7 @@
                     tolerance: 'pointer',
                     accept: source => source.hasClass('tp-slot') || (source.hasClass('inventory-item')
                         && teleport(source.data('item')) && Boolean(this.item(identity(source.data('item'))))),
-                    drop: (e, ui) => {
-                        if (ui.draggable.hasClass('tp-slot')) {
-                            ui.draggable.data('tp-dropped', true);
-                            this.swap(Number(ui.draggable.attr('data-tp-slot')), i);
-                        } else this.assign(i, ui.draggable.data('item'));
-                    }
+                    drop: (e, ui) => this.drop(i, ui.draggable)
                 });
                 // Source is the shortcut cell, never .item: map zones cannot accept it.
                 cell.pointerDraggable({
@@ -494,18 +533,27 @@
             });
             this.count = $('<div>').addClass('tp-count');
             this.selection = $('<div>').addClass('tp-selection');
-            this.startInput = $('<input>').addClass('tp-start').attr({ type: 'number', min: 1, max: SIZE }).val(this.p.config.start);
-            const start = $('<label>').addClass('tp-start-row').append('Początek cyklu ', this.startInput,
+            this.pendingText = $('<div>').addClass('tp-pending').attr({ role: 'status', 'aria-live': 'polite' });
+            const number = this.number('panel_start', this.p.config.start, { min: 1, max: SIZE }, 'input');
+            this.startInput = number.input;
+            const start = $('<div>').addClass('tp-start-row').append(
+                $('<label>').attr('for', number.input.attr('id')).text('Początek cyklu'), number.control,
                 this.button('Ustaw', () => {
                     if (!this.q.setStart(Number(this.startInput.val()))) this.message('Wpisz liczbę od 1 do 60.');
                 }));
-            panel.append(this.status, this.detail, controls, $('<div>').addClass('tp-scroll').append(this.grid), this.count, this.selection, start);
-            this.panel = this.window('PANEL', 'Teleporty', panel, 306);
+            this.scroll = $('<div>').addClass('scroll-wrapper tp-scroll')
+                .append($('<div>').addClass('scroll-pane').append(this.grid));
+            panel.append(this.status, this.detail, this.pendingText, controls, this.scroll, this.count, this.selection, start);
+            this.panel = this.window('PANEL', 'Teleporty', panel, 320);
             this.summary = $('<span>').addClass('tp-summary');
             this.panel.$.find('.header-label-positioner').append(this.summary);
             this.configBody = $('<div>').addClass('tp-config-body');
-            this.configWindow = this.window('CONFIG', 'Konfiguracja teleportów', this.configBody, 320);
+            this.configScroll = $('<div>').addClass('scroll-wrapper tp-config-scroll')
+                .append($('<div>').addClass('scroll-pane').append(this.configBody));
+            this.configWindow = this.window('CONFIG', 'Konfiguracja teleportów', this.configScroll, 320);
             this.fillConfig(this.p.config);
+            this.scrollBar(this.scroll);
+            this.scrollBar(this.configScroll);
             this.fit();
         }
         clearSlot(index) {
@@ -562,6 +610,8 @@
             this.panel.$.toggleClass('tp-active', p.state === 'active').toggleClass('tp-paused', p.state === 'paused');
             this.summary.text(`Następny: ${p.next}`);
             this.detail.text(`Następny slot: ${p.next} · Początek: ${p.config.start} · Interwał: ${p.config.interval} s`);
+            this.pendingText.text(this.q.flight ? this.q.flight.done ?
+                'Brak odpowiedzi. Poczekaj lub odśwież grę przed kolejną próbą.' : 'Czekam na odpowiedź gry…' : '');
             this.manualButton.toggleClass('disable', p.state !== 'off' || Boolean(this.q.flight)).attr('aria-disabled', p.state !== 'off' || Boolean(this.q.flight));
             this.autoButton.find('.label').text({ off: 'Start auto', active: 'Pauza', paused: 'Wznów' }[p.state]);
             this.autoButton.toggleClass('disable', !p.config.auto || (Boolean(this.q.flight) && p.state !== 'active'));
@@ -581,10 +631,32 @@
             this.fields = {};
             const section = text => this.configBody.append($('<div>').addClass('tp-section').text(text));
             const field = (name, text, type, attrs = {}) => {
-                const input = $('<input>').addClass('tp-input').attr({ type, ...attrs });
-                if (type === 'checkbox') input.prop('checked', config[name]); else input.val(config[name]);
+                let control, input;
+                const id = `${this.configWindow._nameWindow}_${name}`;
+                if (type === 'checkbox') {
+                    control = this.api.Templates.get('checkbox-custom').addClass('c-checkbox tp-checkbox');
+                    input = control.find('input').attr({ id, name }).prop('checked', config[name]);
+                    const label = control.find('label').addClass('c-checkbox__label')
+                        .attr({ for: id, tabindex: 0, role: 'checkbox', 'aria-checked': input.prop('checked') }).text(text);
+                    input.on('change.tp', () => {
+                        label.attr('aria-checked', input.prop('checked'));
+                        if (name === 'auto') this.setAuto(input.prop('checked'));
+                    });
+                    label.on('keydown.tp', e => {
+                        if (!['Space', 'Enter'].includes(e.code) || e.repeat) return;
+                        e.preventDefault(); input.prop('checked', !input.prop('checked')).trigger('change');
+                    });
+                } else if (type === 'color') {
+                    control = this.api.Templates.get('c-color-picker').addClass('tp-field tp-color');
+                    input = control.find('input').attr({ id, name }).val(config[name]);
+                    control.find('label').attr('for', id).text(text).prependTo(control);
+                } else {
+                    const number = this.number(name, config[name], attrs);
+                    input = number.input.attr('id', id);
+                    control = $('<div>').addClass('tp-field').append($('<label>').attr('for', id).text(text), number.control);
+                }
                 this.fields[name] = input;
-                this.configBody.append($('<label>').addClass('tp-field').append($('<span>').text(text), input));
+                this.configBody.append(control);
             };
             section('Skróty klawiszowe');
             for (const [name, label] of [['manualKey', 'Użyj ręcznie'], ['autoKey', 'Auto / pauza']]) {
@@ -606,8 +678,18 @@
             field('border', 'Kolor obramowania', 'color');
             field('accent', 'Kolor podświetlenia', 'color');
             this.configBody.append($('<div>').addClass('tp-config-actions').append(
-                this.button('Przywróć domyślne', () => this.fillConfig(defaults()), 'red'),
+                this.button('Przywróć domyślne', () => { this.setAuto(false); this.fillConfig(defaults()); }, 'red'),
                 this.button('Zapisz', () => this.saveConfig())));
+            this.configBody.append($('<div>').addClass('tp-form-note')
+                .text('Zmiany zatwierdź przyciskiem Zapisz. Wyłączenie automatu zatrzymuje go od razu.'));
+            this.updateScroll();
+        }
+        setAuto(enabled) {
+            if (!this.context()) return;
+            this.p.config.auto = enabled;
+            if (this.draft) this.draft.auto = enabled;
+            if (!enabled) this.q.stop();
+            else { this.save(); this.render(); }
         }
         saveConfig() {
             const c = this.draft;
@@ -629,13 +711,16 @@
             this.save(); this.render();
             this.message('Ustawienia zapisane.');
         }
-        openConfig() {
+        openConfig(event) {
+            event?.stopPropagation();
             this.fillConfig(this.p.config);
-            this.configWindow.show(); this.fit();
+            this.configWindow.show();
+            this.configWindow.setWndOnPeak();
+            this.fit();
         }
         togglePanel() {
             this.panel.toggle();
-            if (this.panel.isShow()) { this.sync(); this.fit(); }
+            if (this.panel.isShow()) { this.panel.setWndOnPeak(); this.sync(); this.fit(); }
         }
         bind() {
             // PointerDragDrop dispatches to all intersecting zones, including the map behind a window.
@@ -656,11 +741,8 @@
                 const r = this.panel.$[0].getBoundingClientRect();
                 if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
                 this.$(drag.source).pointerDraggable('cancel');
-                const i = this.cells.findIndex(cell => {
-                    const r = cell[0].getBoundingClientRect();
-                    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-                });
-                if (i >= 0) this.assign(i, this.$(drag.source).data('item'));
+                const i = this.hitSlot(e.clientX, e.clientY);
+                if (i >= 0) this.drop(i, this.$(drag.source));
             }, true);
             this.listen(this.win.document, 'pointercancel', () => { incoming = null; }, true);
             this.listen(this.win.document, 'keydown', e => {
@@ -678,6 +760,7 @@
                     this.capture = null; return;
                 }
                 if (e.composedPath().some(node => node.matches?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'))) return;
+                if (['Space', 'Enter'].includes(e.code) && e.composedPath().some(node => node.matches?.('[role="button"], [role="checkbox"]'))) return;
                 const key = keyOf(e);
                 if (sameKey(key, this.p.config.manualKey) && this.p.state === 'off') {
                     e.preventDefault(); e.stopImmediatePropagation(); void this.q.manual();
@@ -748,6 +831,7 @@
                 wnd.$[0].style.setProperty('--tp-max-height', `${Math.max(100, this.win.innerHeight / zoom - 64)}px`);
                 if (wnd.checkPassTheScreenBounds()) { wnd.updatePos(); wnd.saveWindowPosition(); }
             }
+            this.updateScroll();
         }
         rebuild() {
             if (!this.context()) return;

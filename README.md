@@ -1,6 +1,8 @@
 # Teleporty do Margonem NI
 
-Dodatek autorstwa **Doiua**, wersja **0.1.0**. Udostępnia panel 60 skrótów do teleportów z torby, kolejkę ręczną oraz uruchamiany przez gracza tryb czasowy.
+Dodatek autorstwa **Doiua**, wersja **0.1.1**. Udostępnia panel 60 skrótów do teleportów z torby, kolejkę ręczną oraz uruchamiany przez gracza tryb czasowy.
+
+Wersja 0.1.1 usuwa fałszywą blokadę użycia poza rzemiosłem i poprawia dostęp do konfiguracji. Sloty, pasek przewijania i formularze korzystają z wyglądu NI. Aktualizacja zachowuje przypisania oraz ustawienia postaci.
 
 [Plik do instalacji w Tampermonkey](https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js)
 
@@ -14,6 +16,8 @@ Implementacja przeszła testy lokalne. Weryfikacja w zalogowanym Margonem pozost
 4. Naciśnij **F9** albo **Użyj ręcznie**, aby wykonać jedną próbę. Kolejka pomija puste i niedostępne sloty.
 5. Koło zębate otwiera konfigurację. Włącz tam tryb automatyczny, jeśli chcesz go używać. **F10** lub przycisk automatu rozpoczyna działanie, wstrzymuje je albo wznawia. Domyślny odstęp wynosi 120 sekund.
 6. **STOP** zatrzymuje automat i wraca do ustawionego początku cyklu. Ukrycie panelu zachowuje działający automat.
+
+Odznaczenie **Włącz tryb automatyczny** od razu wykonuje STOP i zapisuje wyłączenie, bez czekania na przycisk Zapisz. Ponowne zaznaczenie opcji zapisuje włączenie, ale uruchomienie nadal wymaga Start lub binda. Pozostałe zmiany konfiguracji zatwierdź przez **Zapisz**.
 
 Przeciąganie pomiędzy slotami zamienia skróty miejscami. Prawy przycisk myszy otwiera opcje **Użyj** i **Usuń**. Przeciągnięcie skrótu poza panel usuwa przypisanie. Te działania nie usuwają rzeczywistego przedmiotu z torby.
 
@@ -52,5 +56,7 @@ node tests/browser.cjs
 ```
 
 Playwright musi być dostępny dla Node, np. przez `NODE_PATH` wskazujący posiadany katalog pakietów. Test korzysta również z dostarczonych obok głównego pliku `vendors.min.Dme5lfFa.js`, `rolldown-runtime.min.7_rZTKki.js` i `style.KGLtTzyt.css`. Kod gry jest czytany wyłącznie do lokalnego testu.
+
+Domyślnie test blokuje zewnętrzne zasoby. Do dodatkowego przeglądu wyglądu można ustawić `TP_NATIVE_ASSET_ORIGIN` na adres klienta udostępniającego publiczne `/img/` oraz `TP_SCREENSHOT` na lokalną ścieżkę PNG. Pobierane są wtedy wyłącznie statyczne grafiki interfejsu; test nadal nie loguje się ani nie wysyła żądań użycia przedmiotów do gry.
 
 Przy aktualizacji zmień `@version` oraz `?v=` w adresach core, CSS i ikony. Zachowaj klucz profilu `margo-tp:v1:<world>:<characterId>` oraz dotychczasowe dane. Wszystkie adresy są już ustawione na `Doiua97/teleport-queue`, gałąź `main`; nie ma pól do uzupełnienia.
