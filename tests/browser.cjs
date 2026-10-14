@@ -20,6 +20,250 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
     return [name, code.slice(start, code.indexOf('`;', start))];
 }));
 
+async function initNativeKeys(page) {
+        await page.evaluate(() => {
+            window.correctKey = key => key ? key.toUpperCase() : key; window.invertKeyInputOnSpecificMap = () => false;
+            window.isPl = () => true;
+            window.getAlreadyInitialised = () => true; window.ServerStorageData_default = { HOTKEYS: 'HOTKEYS' };
+            const original = Engine.serverStorage.get; window.nativeBindings = {};
+            Engine.serverStorage.get = (name, key) => name === 'HOTKEYS' ? nativeBindings[key] ?? null : original(name, key);
+            Engine.serverStorage.getDataLoaded = () => true;
+            Engine.settings = { getBlockInput: () => false }; Engine.tutorialManager = { checkBlockHotKeys: () => false };
+            window.TutorialData_default = { ON_FINISH_REQUIRE: { OPEN_WINDOW: 'open' }, ON_FINISH_TYPE: { REQUIRE: 'require' } };
+            Engine.tutorialManager.createTutorialDataTrigger = () => ({}); Engine.rajController = { parseObject() {} };
+            Engine.map.onmouseup = () => {}; Engine.battle.getShow = () => false; window.gameActions = 0;
+            Engine.widgetManager.widgetOnClick = () => gameActions++;
+            $.fn.getTipData = function () { return this.attr('title') || ''; };
+            Engine.interfaceItems.doInterfaceItemAcion = () => gameActions++; Engine.battle.endBattle = true;
+        });
+        for (const name of ['HeroDirectionData', 'HotKeysData', 'InputParser', 'HotKeys']) await page.addScriptTag({ content: moduleCode(name) });
+        await page.evaluate(() => { Engine.hotKeys = new HotKeys(); Engine.hotKeys.init(); });
+        await page.waitForTimeout(20);
+}
+
+async function resetCase(page) {
+    await page.evaluate(() => {
+        window.app?.destroy(); Engine.hero.d.id = window.testCharacter = (window.testCharacter || 200) + 1;
+        Engine.catchChar = false; Engine.shop = false; Engine.lock.list = []; Engine.allInit = true;
+        Engine.reload = false; Engine.map.drawable = Engine.map.unlock = true; Engine.map.lock.list = [];
+        for (const name of Object.keys(nativeBindings)) delete nativeBindings[name]; Engine.hotKeys.rebuildHotKeys();
+        app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); app.panel.setContentPos('100px', '40px');
+        app.p.config.auto = true; responseType = 'uncertain'; gameActions = 0;
+        for (let i = 1; i <= 6; i++) {
+            hItems[String(2000 + i)]?.$.remove();
+            app.assign(i - 1, makeItem(2000 + i, `teleport=${i},2,3,Lokacja ${i};amount=20`));
+        }
+        app.q.stop();
+    });
+}
+async function setBind(page, combination, name = 'manualKey') {
+    await page.evaluate(name => { app.openConfig(); app.openCapture(name); }, name);
+    await page.keyboard.press(combination);
+    await page.locator('.tp-bind .tp-button').filter({ hasText: 'Zapisz' }).click();
+    assert.equal(await page.evaluate(() => Boolean(app.capture)), false, 'kombinacja musi zostać zapisana');
+    await page.evaluate(() => { app.configWindow.hide(); app.panel.setWndOnPeak(); });
+    await page.locator('.tp-slot').first().click();
+}
+async function dragHeader(page, kind, area, collapsed) {
+    await page.evaluate(({ kind, collapsed }) => {
+        const wnd = kind === 'panel' ? app.panel : kind === 'config' ? app.configWindow : app.bindWindow;
+        if (wnd.$.hasClass('window--collapsed') !== collapsed) wnd.$.find('.collapse').trigger('click');
+        wnd.show(); wnd.setWndOnPeak(); wnd.setContentPos('100px', '40px'); wnd.saveWindowPosition();
+    }, { kind, collapsed });
+    const before = await page.locator('.tp-' + kind).boundingBox();
+    const selector = area === 'summary' ? '.tp-summary' : area === 'title' ? '.header-label .text' : '.draggable-window-element';
+    const handle = await page.locator('.tp-' + kind + ' ' + selector).boundingBox(); assert(handle);
+    const x = area === 'empty' ? before.x + 85 : handle.x + handle.width / 2;
+    const y = handle.y + handle.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 10, y + 10);
+    await page.mouse.move(x + 100, y + 75, { steps: 10 }); await page.mouse.up();
+    const after = await page.locator('.tp-' + kind).boundingBox();
+    assert(Math.abs(after.x - before.x - 90) < 3 && Math.abs(after.y - before.y - 65) < 3,
+        `${kind}/${area}/${collapsed}: nagłówek musi przesunąć okno; ${JSON.stringify({ before, after })}`);
+}
+async function regressions(page, check) {
+    await check('0.1.3: pełne kombinacje C/K/G, obce skróty, powtórzenia i profile', async () => {
+        await resetCase(page);
+        for (const letter of ['c', 'k', 'g']) {
+            await setBind(page, 'Shift+' + letter);
+            const before = await page.evaluate(() => ({ requests: requests.length, game: gameActions }));
+            await page.keyboard.press('Shift+' + letter);
+            assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: before.requests + 1, game: before.game });
+            await page.keyboard.press(letter);
+            assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: before.requests + 1, game: before.game + 1 });
+        }
+        for (const combination of ['Control+c', 'Alt+c', 'Meta+F8', 'Control+Alt+k', 'Control+Alt+g']) {
+            await setBind(page, combination);
+            const before = await page.evaluate(() => ({ requests: requests.length, game: gameActions }));
+            await page.keyboard.press(combination);
+            assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: before.requests + 1, game: before.game });
+        }
+        await setBind(page, 'Shift+c');
+        const n = await page.evaluate(() => requests.length);
+        await page.keyboard.down('Shift'); await page.keyboard.down('c'); await page.keyboard.down('c'); await page.keyboard.down('c');
+        await page.keyboard.up('c'); await page.keyboard.up('Shift'); assert.equal(await page.evaluate(() => requests.length), n + 1);
+        assert.equal(await page.evaluate(() => app.swallowed.size), 0);
+        await page.evaluate(() => { app.p.state = 'paused'; });
+        const paused = await page.evaluate(() => ({ requests: requests.length, game: gameActions })); await page.keyboard.press('Shift+c');
+        assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: paused.requests, game: paused.game + 1 });
+        await page.evaluate(() => { app.q.stop(); app.p.config.auto = false; app.p.config.autoKey = { ...app.p.config.manualKey, code: 'KeyK', key: 'K' }; });
+        const disabled = await page.evaluate(() => ({ requests: requests.length, game: gameActions })); await page.keyboard.press('Shift+k');
+        assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: disabled.requests, game: disabled.game + 1 });
+        for (const selector of ['input', 'textarea', 'magic_input', '[contenteditable]']) {
+            await page.evaluate(selector => {
+                const tag = selector === '[contenteditable]' ? 'div' : selector;
+                const el = document.createElement(tag); el.id = 'edit-probe'; el.tabIndex = 0;
+                if (selector === '[contenteditable]') el.contentEditable = 'true'; document.body.append(el); el.focus();
+            }, selector);
+            const before = await page.evaluate(() => requests.length); await page.keyboard.press('Shift+c');
+            assert.equal(await page.evaluate(() => requests.length), before);
+            await page.evaluate(() => document.querySelector('#edit-probe').remove());
+        }
+        await page.locator('.tp-slot').first().click();
+        await page.evaluate(() => { Engine.catchChar = {}; }); const catchBefore = await page.evaluate(() => requests.length);
+        await page.keyboard.press('Shift+c'); assert.equal(await page.evaluate(() => requests.length), catchBefore);
+        await page.evaluate(() => { Engine.catchChar = false; Engine.shop = {}; });
+        await page.keyboard.press('Shift+c'); assert.equal(await page.evaluate(() => requests.length), catchBefore);
+        await page.evaluate(() => { Engine.shop = false; });
+        await page.evaluate(() => {
+            window.foreign = e => { if (e.code === 'KeyC' && e.shiftKey) e.preventDefault(); };
+            window.addEventListener('keydown', foreign, true);
+        });
+        await page.keyboard.press('Shift+c'); assert.equal(await page.evaluate(() => requests.length), catchBefore);
+        await page.evaluate(() => window.removeEventListener('keydown', foreign, true));
+        await page.evaluate(() => { Engine.hotKeys.hotKeys['Shift+KeyC'] = 'foreign-addon'; app.openCapture('manualKey'); });
+        await page.keyboard.press('Shift+c'); await page.evaluate(() => app.saveCapture());
+        assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już zajęty.');
+        await page.keyboard.press('Escape');
+        const occupied = await page.evaluate(() => requests.length); await page.keyboard.press('Shift+c');
+        assert.equal(await page.evaluate(() => requests.length), occupied);
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyC');
+        await page.evaluate(() => { delete Engine.hotKeys.hotKeys['Shift+KeyC']; window.otherCount = 0;
+            window.otherShortcut = e => { if (e.code === 'KeyZ' && e.altKey) { if (e.type === 'keydown' && !e.repeat) otherCount++; e.preventDefault(); e.stopImmediatePropagation(); } };
+            for (const event of ['keydown', 'keypress', 'keyup']) window.addEventListener(event, otherShortcut, true);
+        });
+        const other = await page.evaluate(() => requests.length); await page.keyboard.press('Alt+z');
+        assert.equal(await page.evaluate(() => otherCount), 1); assert.equal(await page.evaluate(() => requests.length), other);
+        await page.evaluate(() => { for (const event of ['keydown', 'keypress', 'keyup']) window.removeEventListener(event, otherShortcut, true); });
+        await page.evaluate(() => app.openCapture('autoKey')); await page.keyboard.press('Shift+c'); await page.evaluate(() => app.saveCapture());
+        assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już zajęty.'); await page.keyboard.press('Escape');
+        await page.keyboard.press('c'); assert.equal(await page.evaluate(() => app.swallowed.size), 0);
+        await page.evaluate(() => { window.originalCharacter = Engine.hero.d.id; app.save(); window.profileSnapshot = structuredClone(values.get(app.key));
+            app.destroy(); Engine.hero.d.id++; app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); app.assign(0, hItems['2001']);
+        });
+        const switched = await page.evaluate(() => requests.length); await page.locator('.tp-slot').first().click(); await page.keyboard.press('F9');
+        assert.equal(await page.evaluate(() => requests.length), switched + 1);
+        await page.evaluate(() => { app.destroy(); Engine.hero.d.id = originalCharacter; app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); });
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.shift), true);
+        assert.deepEqual(await page.evaluate(() => values.get(app.key)), await page.evaluate(() => profileSnapshot));
+        const restored = await page.evaluate(() => requests.length); await page.locator('.tp-slot').first().click(); await page.keyboard.press('Shift+c');
+        assert.equal(await page.evaluate(() => requests.length), restored + 1);
+        await setBind(page, 'y'); await page.evaluate(() => { nativeBindings.iconparty = 'Y'; Engine.hotKeys.rebuildHotKeys(); });
+        const late = await page.evaluate(() => requests.length); await page.keyboard.press('y'); assert.equal(await page.evaluate(() => requests.length), late);
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyY');
+        await page.evaluate(() => { delete nativeBindings.iconparty; Engine.hotKeys.rebuildHotKeys(); });
+    });
+    await check('0.1.3: odnowienie 90 i 125 minut na prawdziwym widoku ikony', async () => {
+        await resetCase(page);
+        for (const [seconds, expected] of [[15, '15s'], [59, '59s'], [60, '1m'], [90, '2m'], [1800, '30m'], [3600, '60m'], [5400, '90m'], [7500, '125m'], [10800, '180m']]) {
+            const value = await page.evaluate(seconds => {
+                hItems['2001'].stat = `teleport=1,2,3,Lokacja 1;amount=20;timelimit=180,${Date.now() / 1000 + seconds}`;
+                app.overlays(); return { text: app.cells[0].find('.tp-cooldown').text(), available: app.available(hItems['2001']) };
+            }, seconds); assert.equal(value.text, expected); assert.equal(value.available, false);
+        }
+    });
+    await check('0.1.3: rzeczywiste rozmiary PANEL/CONFIG/BIND, scrollbar, pozycja i zapis', async () => {
+        await resetCase(page);
+        for (const [kind, expected] of [['config', [420, 560, 260]], ['panel', [220, 310, 140]], ['bind', [340, 380, 300]]]) {
+            await page.evaluate(kind => {
+                app.closeCapture(); app.configWindow.hide();
+                if (kind === 'config') app.openConfig(); if (kind === 'bind') app.openCapture('manualKey');
+                const wnd = app[kind === 'bind' ? 'bindWindow' : kind === 'config' ? 'configWindow' : 'panel'];
+                wnd.show(); wnd.setWndOnPeak(); wnd.setContentPos('100px', '40px'); wnd.saveWindowPosition();
+            }, kind);
+            const dims = [], windows = [];
+            for (let i = 0; i < 3; i++) {
+                const rect = await page.locator('.tp-' + kind).evaluate(el => el.getBoundingClientRect().toJSON()); windows.push(kind === 'bind' ? rect.width : rect.height);
+                dims.push(kind === 'bind' ? rect.width : (await page.locator(kind === 'config' ? '.tp-config-scroll' : '.tp-scroll').boundingBox()).height);
+                assert.equal(rect.x, 100); assert.equal(rect.y, 40);
+                await page.locator('.tp-' + kind + ' .toggle-size-button').click();
+            }
+            assert.deepEqual(dims, expected); assert.equal(new Set(windows).size, 3);
+            if (kind !== 'bind') {
+                const scroll = page.locator(kind === 'config' ? '.tp-config-scroll' : '.tp-scroll');
+                assert.equal(await scroll.locator('.scrollbar-wrapper').count(), 1);
+                await scroll.hover(); await page.mouse.wheel(0, 180);
+                await page.waitForFunction(selector => document.querySelector(selector + ' .scroll-pane').scrollTop > 0, kind === 'config' ? '.tp-config-scroll' : '.tp-scroll');
+                assert((await scroll.locator('.scroll-pane').evaluate(el => el.scrollTop)) > 0);
+            }
+            await page.locator('.tp-' + kind + ' .toggle-size-button').click();
+            await page.evaluate(kind => { const wnd = kind === 'config' ? app.configWindow : kind === 'bind' ? app.bindWindow : app.panel; wnd.hide(); wnd.show(); }, kind);
+            assert.equal((await page.locator('.tp-' + kind).boundingBox())[kind === 'bind' ? 'width' : 'height'], windows[1]);
+        }
+        await page.evaluate(() => { app.closeCapture(); app.configWindow.hide(); app.destroy(); app = new TeleportQueue.App(env).init(); app.panel.show(); app.openConfig(); app.openCapture('manualKey'); });
+        assert.equal((await page.locator('.tp-bind').boundingBox()).width, 380);
+        assert.equal((await page.locator('.tp-config-scroll').boundingBox()).height, 560);
+        assert.equal((await page.locator('.tp-scroll').boundingBox()).height, 310);
+        await page.setViewportSize({ width: 430, height: 600 });
+        await page.evaluate(() => { Engine.zoomFactor = 1.2; app.fit(); });
+        for (const kind of ['panel', 'config', 'bind']) {
+            const rect = await page.locator('.tp-' + kind).evaluate(el => el.getBoundingClientRect().toJSON()); assert(rect.right <= 430); assert(rect.bottom <= 600);
+        }
+        await page.setViewportSize({ width: 1000, height: 800 }); await page.evaluate(() => { Engine.zoomFactor = 1; app.fit(); });
+        await page.evaluate(() => { app.destroy(); Engine.hero.d.id++; app = new TeleportQueue.App(env).init(); app.panel.show(); app.openConfig(); app.openCapture('manualKey'); });
+        assert.equal((await page.locator('.tp-bind').boundingBox()).width, 340);
+        assert.equal((await page.locator('.tp-config-scroll').boundingBox()).height, 420);
+    });
+    await check('0.1.3: fizyczne przeciąganie nagłówków za tytuł, lokację i pustą belkę', async () => {
+        await resetCase(page);
+        await page.evaluate(() => { hItems['2001'].stat = 'teleport=1,2,3,Bardzo długa nazwa lokacji do testu wielokropka;amount=20'; app.render(); });
+        await dragHeader(page, 'panel', 'summary', true);
+        assert((await page.locator('.tp-panel .draggable-window-element').getAttribute('title')).includes('Bardzo długa'));
+        for (const collapsed of [false, true]) {
+            for (const area of ['empty', 'title']) await dragHeader(page, 'panel', area, collapsed);
+            for (const kind of ['config', 'bind']) {
+                await page.evaluate(kind => { if (kind === 'config') app.openConfig(); else app.openCapture('manualKey'); }, kind);
+                await dragHeader(page, kind, 'title', collapsed); await dragHeader(page, kind, 'empty', collapsed);
+            }
+        }
+        await page.evaluate(() => { app.closeCapture(); app.configWindow.hide(); });
+        await page.locator('.tp-panel .collapse').click();
+        assert.equal(await page.locator('.tp-panel').evaluate(el => el.classList.contains('window--collapsed')), false);
+        const opacity = await page.locator('.tp-panel').getAttribute('data-opacity-lvl');
+        await page.locator('.tp-panel .increase-opacity').click(); assert.notEqual(await page.locator('.tp-panel').getAttribute('data-opacity-lvl'), opacity);
+        await page.locator('.tp-panel .manage-configuration-button').click(); assert.equal(await page.locator('.tp-config').isVisible(), true);
+        await page.locator('.tp-config .close-button').click(); assert.equal(await page.locator('.tp-config').isVisible(), false);
+    });
+    await check('0.1.3: numer, podświetlenie i nazwa mają wspólny wybór kolejki', async () => {
+        await resetCase(page); await page.evaluate(() => { app.remove(0); app.remove(2); app.toggleLock(4); });
+        async function next(expected) {
+            const value = await page.evaluate(() => ({ slots: app.cells.flatMap((c, i) => c.hasClass('tp-next') ? [i + 1] : []),
+                detail: app.detail.text(), summary: app.summary.text(), actual: app.q.find()?.slot, cursor: app.p.next, count: requests.length }));
+            assert.deepEqual(value.slots, expected ? [expected] : []); assert.equal(value.actual, expected || undefined);
+            assert(value.detail.startsWith('Następny slot: ' + (expected || 'brak gotowych') + ' ·'));
+            assert.equal(value.summary, 'Następna: ' + (expected ? 'Lokacja ' + expected : 'brak gotowych')); return value;
+        }
+        const first = await next(2); assert.equal(first.cursor, 1);
+        await page.evaluate(() => app.q.manual()); await next(4);
+        await page.evaluate(() => app.q.manual()); await next(6);
+        await page.evaluate(() => app.q.manual()); await next(2);
+        await page.evaluate(() => { app.toggleLock(1); }); await next(4);
+        await page.evaluate(() => { app.toggleLock(1); }); await next(2);
+        await page.evaluate(() => { hItems['2002'].stat = `teleport=2,2,3,Lokacja 2;amount=20;timelimit=180,${Date.now() / 1000 + 100}`; app.overlays(); }); await next(4);
+        await page.evaluate(() => { hItems['2002'].stat = 'teleport=2,2,3,Lokacja 2;amount=20'; app.overlays(); }); await next(2);
+        await page.evaluate(() => { app.swap(1, 3); });
+        assert.equal(await page.evaluate(() => app.q.find().slot), 2); assert.equal(await page.evaluate(() => app.summary.text()), 'Następna: Lokacja 4');
+        await page.evaluate(() => { app.swap(1, 3); app.q.setStart(4); }); await next(4);
+        await page.evaluate(() => app.q.manual()); await next(6); await page.evaluate(() => app.q.manual()); await next(4);
+        await page.evaluate(() => { hItems['2004'].trigger('delete'); delete hItems['2004']; delete Engine.items.test().items['2004']; app.sync(); }); await next(6);
+        await page.evaluate(() => { app.toggleLock(5); }); const empty = await next(null);
+        const before = await page.evaluate(() => requests.length); await page.evaluate(() => { app.overlays(); app.render(); app.togglePanel(); app.togglePanel(); });
+        assert.equal(await page.evaluate(() => app.p.next), empty.cursor); assert.equal(await page.evaluate(() => requests.length), before);
+        await page.evaluate(() => { app.save(); app.destroy(); app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); app.toggleLock(5); }); await next(6);
+        await page.evaluate(() => { app.destroy(); });
+    });
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true, ...(process.env.TP_BROWSER_CHANNEL ? { channel: process.env.TP_BROWSER_CHANNEL } : {}) });
     try {
@@ -188,10 +432,19 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             (function () { ${useMethod} }).call(self);
         })();` });
         await page.addStyleTag({ content: fs.readFileSync(path.join(sourceDir, 'style.KGLtTzyt.css'), 'utf8') });
-        await page.addStyleTag({ path: path.resolve(__dirname, '../teleporty.css') });
-        await page.addScriptTag({ path: path.resolve(__dirname, '../teleporty.core.js') });
+        await page.addStyleTag({ path: process.env.TP_CSS_FILE || path.resolve(__dirname, '../teleporty.css') });
+        await page.addScriptTag({ path: process.env.TP_CORE_FILE || path.resolve(__dirname, '../teleporty.core.js') });
         const checks = [];
         async function check(name, fn) { await fn(); checks.push(name); console.log('PASS ' + name); }
+        if (process.env.TP_PROBE) {
+            await initNativeKeys(page);
+            const failures = [];
+            await regressions(page, async (name, fn) => {
+                try { await fn(); console.log('PASS ' + name); } catch (error) { failures.push(name); console.log('FAIL ' + name + ': ' + error.message); }
+            });
+            if (failures.length) throw new Error('Regression probes failed: ' + failures.length);
+            assert.deepEqual(errors, []); return;
+        }
         await check('natywne okna i widget, 60 slotów oraz profil', async () => {
             const result = await page.evaluate(() => {
                 window.app = new TeleportQueue.App(env).init(); app.togglePanel();
@@ -745,7 +998,7 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
                 app.p.locked.fill(true); app.render(); const none = app.summary.text() === 'Następna: brak gotowych'; app.unlockAll();
                 app.panel.$.find('.collapse').trigger('click');
                 const color = getComputedStyle(app.summary[0]).color;
-                const ellipsis = getComputedStyle(app.summary[0]).textOverflow === 'ellipsis' && Boolean(app.summary.attr('title'));
+                const ellipsis = getComputedStyle(app.summary[0]).textOverflow === 'ellipsis' && Boolean(app.panel.$.find('.draggable-window-element').attr('title'));
                 app.panel.$.find('.collapse').trigger('click');
                 const row = app.startInput.closest('.tp-start-row')[0];
                 const children = [...row.children].map(e => e.getBoundingClientRect());
@@ -774,39 +1027,22 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             }); assert.deepEqual(result.heights, [220, 310, 140]); assert.equal(new Set(result.totals).size, 3); assert.deepEqual(result.cols, [7, 7, 7]);
             assert.equal(result.bars, 1); assert(result.sizeSaved && result.paused && result.saved && result.locks); await page.evaluate(() => app.q.stop());
         });
-        await page.evaluate(() => {
-            window.correctKey = key => key ? key.toUpperCase() : key; window.invertKeyInputOnSpecificMap = () => false;
-            window.isPl = () => true;
-            window.getAlreadyInitialised = () => true; window.ServerStorageData_default = { HOTKEYS: 'HOTKEYS' };
-            const original = Engine.serverStorage.get; window.nativeBindings = {};
-            Engine.serverStorage.get = (name, key) => name === 'HOTKEYS' ? nativeBindings[key] ?? null : original(name, key);
-            Engine.serverStorage.getDataLoaded = () => true;
-            Engine.settings = { getBlockInput: () => false }; Engine.tutorialManager = { checkBlockHotKeys: () => false };
-            window.TutorialData_default = { ON_FINISH_REQUIRE: { OPEN_WINDOW: 'open' }, ON_FINISH_TYPE: { REQUIRE: 'require' } };
-            Engine.tutorialManager.createTutorialDataTrigger = () => ({}); Engine.rajController = { parseObject() {} };
-            Engine.map.onmouseup = () => {}; Engine.battle.getShow = () => false; window.gameActions = 0;
-            Engine.widgetManager.widgetOnClick = () => gameActions++;
-            $.fn.getTipData = function () { return this.attr('title') || ''; };
-            Engine.interfaceItems.doInterfaceItemAcion = () => gameActions++; Engine.battle.endBattle = true;
-        });
-        for (const name of ['HeroDirectionData', 'HotKeysData', 'InputParser', 'HotKeys']) await page.addScriptTag({ content: moduleCode(name) });
-        await page.evaluate(() => { Engine.hotKeys = new HotKeys(); Engine.hotKeys.init(); });
-        await page.waitForTimeout(20);
+        await initNativeKeys(page);
         await check('0.1.2: osobne natywne okno, przechwytywanie nie uruchamia InputParser', async () => {
             await page.evaluate(() => { app.openConfig(); app.fields.manualKey[0].focus(); });
             await page.keyboard.press('Enter');
-            await page.keyboard.press('Control+w'); await page.keyboard.press('Shift+q');
+            await page.keyboard.press('Shift+q'); await page.keyboard.press('Control+w');
             const result = await page.evaluate(() => ({ native: app.bindWindow.$.hasClass('transparent'),
                 title: app.bindWindow.$.find('.header-label').text().trim(), conflict: app.bindError.text(),
                 game: gameActions, move: input.getMoveDirection(), windows: document.querySelectorAll('.tp-bind').length }));
-            assert(result.native); assert.equal(result.title, 'Ustaw skrót klawiszowy'); assert(result.conflict.includes('Ten skrót jest już używany przez Margonem.'));
+            assert(result.native); assert.equal(result.title, 'Ustaw skrót klawiszowy'); assert(result.conflict.includes('Ten skrót jest już zajęty.'));
             assert.equal(result.game, 0); assert.equal(result.move, null); assert.equal(result.windows, 1);
             await page.evaluate(() => app.saveCapture()); assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
             if (process.env.TP_SCREENSHOT) await page.screenshot({ path: process.env.TP_SCREENSHOT.replace(/\.png$/, '-bind.png') });
         });
         await check('0.1.2: modyfikator, konflikt dodatku, bezpośredni zapis i synchronizacja formularza', async () => {
             await page.keyboard.down('Control'); assert.equal(await page.evaluate(() => Boolean(app.capture)), true); await page.keyboard.up('Control');
-            await page.keyboard.press('F10'); assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już używany przez teleporty.');
+            await page.keyboard.press('F10'); assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już zajęty.');
             await page.evaluate(() => app.saveCapture()); assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
             await page.keyboard.press('Shift+F8'); await page.evaluate(() => app.saveCapture());
             const result = await page.evaluate(() => {
@@ -832,11 +1068,12 @@ const templates = Object.fromEntries(['border-window', 'button', 'widget-button'
             await page.evaluate(() => { app.configWindow.hide(); nativeBindings.hotAttackNearMob = 'Y'; Engine.hotKeys.rebuildHotKeys(); app.q.stop(); });
             const before = await page.evaluate(() => requests.length); await page.locator('.tp-slot').first().click(); await page.keyboard.press('y');
             assert.equal(await page.evaluate(() => requests.length), before); assert.equal(await page.evaluate(() => gameActions), 1);
-            await page.evaluate(() => { app.openCapture('manualKey'); }); await page.keyboard.press('Alt+y'); await page.evaluate(() => app.saveCapture());
+            await page.evaluate(() => { app.openCapture('manualKey'); }); await page.keyboard.press('y'); await page.evaluate(() => app.saveCapture());
             assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
             await page.keyboard.press('Escape'); assert.equal(await page.evaluate(() => gameActions), 1);
             await page.evaluate(() => { app.destroy(); });
         });
+        await regressions(page, check);
         assert.deepEqual(errors, []);
         console.log(`Browser: ${checks.length} checks passed; native Window, ItemsManager, PointerDragDrop and API; controlled game/server fixture.`);
     } finally { await browser.close(); }

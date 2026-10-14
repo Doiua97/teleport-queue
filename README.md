@@ -1,12 +1,12 @@
 # Teleporty do Margonem NI
 
-Dodatek autorstwa **Doiua**, wersja **0.1.2**. Panel ma 60 miejsc na teleporty z torby, kolejkę ręczną oraz automat uruchamiany przez gracza.
+Dodatek autorstwa **Doiua**, wersja **0.1.3**. Panel ma 60 miejsc na teleporty z torby, kolejkę ręczną oraz automat uruchamiany przez gracza.
 
-Wersja 0.1.2 poprawia potwierdzanie użycia i oczekiwanie na mapę. Dodaje blokady poszczególnych miejsc, uzupełnianie panelu z torby, grupowanie zgodnych stosów, nazwę następnej lokacji, trzy rozmiary i osobne okno ustawiania skrótu z kontrolą skrótów gry.
+Wersja 0.1.3 poprawia skróty z modyfikatorami, zapis czasu odnowienia w minutach, rozmiary wszystkich okien, przeciąganie nagłówków za tekst oraz spójne wskazywanie następnego gotowego teleportu. Zachowuje przypisania, grupy, blokady i ustawienia wersji 0.1.2.
 
 [Plik do instalacji w Tampermonkey](https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js)
 
-Wykonano testy lokalne: **41 testów logiki i 44 scenariusze przeglądarkowe**. Nie instalowano dodatku na prawdziwej postaci. Testy z kontrolowanymi odpowiedziami nie potwierdzają działania na serwerze; zakres i pozostałe sprawdzenia opisuje [raport](REPORT.md).
+Wykonano testy lokalne: **46 testów logiki i 49 scenariuszy przeglądarkowych**. Pięć nowych scenariuszy odtwarzało błędy na niezmienionej wersji 0.1.2 i przechodzi na 0.1.3. Nie instalowano dodatku na prawdziwej postaci. Testy z kontrolowanymi odpowiedziami nie potwierdzają działania na serwerze; zakres i pozostałe sprawdzenia opisuje [raport](REPORT.md).
 
 ## Używanie
 
@@ -23,9 +23,15 @@ Zgodne teleporty zużywalne są podczas pobierania przedstawiane razem: dwa stos
 
 Przeciąganie między slotami zamienia przypisania, także całe grupy. Prawy przycisk myszy otwiera **Użyj** i **Usuń**; zablokowane miejsce udostępnia tylko usunięcie. Przeciągnięcie poza panel usuwa skrót. Rzeczywiste przedmioty pozostają w torbie.
 
-Pod liczbą przypisań znajdują się wybrany slot i ustawienie początku cyklu. Cykl od 12 obejmuje wyłącznie 12–60 i wraca do 12, nawet jeśli pobieranie uzupełni też miejsca 1–11. Natywny przycisk rozmiaru przełącza widok kompaktowy, standardowy i powiększony; każdy ma siedem kolumn. Zwinięty nagłówek wskazuje następne gotowe miejsce docelowe; pełny tekst jest dostępny po najechaniu.
+Pod liczbą przypisań znajdują się wybrany slot i ustawienie początku cyklu. Cykl od 12 obejmuje wyłącznie 12–60 i wraca do 12, nawet jeśli pobieranie uzupełni też miejsca 1–11. Numer, podświetlenie i nazwa celu zawsze wskazują ten sam następny gotowy teleport. Gdy go brak, nie podświetla się pustego miejsca. Odnowienie pokazuje sekundy poniżej minuty, a następnie minuty: np. 90m zamiast 2h.
 
-Kliknięcie aktualnego skrótu w konfiguracji otwiera **Ustaw skrót klawiszowy**. Naciśnij kombinację i kliknij **Zapisz** — zaczyna obowiązywać od razu. **Wyczyść** przygotowuje usunięcie, zatwierdzane przez **Zapisz**. **Anuluj**, krzyżyk lub Escape zachowuje wcześniejszy skrót. Kombinacje zajęte przez grę albo drugi skrót dodatku nie zostaną zapisane. Późniejsza zmiana skrótu gry również chroni jej akcję przed przejęciem przez dodatek.
+Natywny przycisk rozmiaru ma trzy warianty w każdym oknie: panel zachowuje siedem kolumn i wysokości obszaru 140/220/310 px, konfiguracja 260/420/560 px, a okno skrótu szerokości 300/340/380 px. Nagłówki można przeciągać także za tekst, po rozwinięciu i zwinięciu. Pełna nazwa następnej lokacji jest dostępna po najechaniu na zwiniętą belkę.
+
+Kliknięcie aktualnego skrótu w konfiguracji otwiera **Ustaw skrót klawiszowy**. Naciśnij kombinację i kliknij **Zapisz** — zaczyna obowiązywać od razu. **Wyczyść** przygotowuje usunięcie, zatwierdzane przez **Zapisz**. **Anuluj**, krzyżyk lub Escape zachowuje wcześniejszy skrót.
+
+Sama litera i kombinacja to oddzielne skróty: gdy gra korzysta z C, możesz ustawić Shift+C dla Teleportów. C pozostanie w grze, a Shift+C wykona tylko funkcję dodatku, gdy jest dostępna. Pisanie w polach, natywne przypisywanie klawiszy, blokady gry i wcześniejsze obsłużenie zdarzenia mają pierwszeństwo. Przytrzymanie nie ponawia użycia. Wyłączona funkcja nie przejmuje klawisza.
+
+Komunikat **Ten skrót jest już zajęty.** obejmuje identyczny skrót dodatku, wykrywalne zajęte przypisanie oraz znane klawisze przeglądarki/systemu. Przykładowo Ctrl+Shift+C w Edge otwiera narzędzia przeglądarki. Wykrywanie cudzych skrótów jest ograniczone do jawnych wpisów w rejestrze klawiszy gry i widocznego wcześniejszego obsłużenia zdarzenia; prywatnych skrótów wszystkich dodatków nie można automatycznie odczytać.
 
 Odznaczenie **Włącz tryb automatyczny** od razu wykonuje STOP i zapisuje wyłączenie. Ponowne zaznaczenie zapisuje włączenie; uruchomienie nadal wymaga Start lub skrótu. Pozostałe opcje zatwierdź przez **Zapisz**.
 
@@ -33,13 +39,13 @@ Zaakceptowane użycie przesuwa kolejkę. Normalne ładowanie mapy zachowuje akty
 
 KC bez miejsca otwiera wybór w grze i zachowuje slot. Automat pauzuje; wybierz miejsce i wznów go, gdy będziesz gotowy. Przy odrzuceniu albo braku potwierdzenia wskaźnik pozostaje. Brak odpowiedzi utrzymuje blokadę kolejnego żądania do późnej odpowiedzi lub odświeżenia.
 
-**Dane 0.1.1 nie są przenoszone.** Wersja 0.1.2 zaczyna nowy zapis dla każdej postaci. Starsze dane i dane innych postaci pozostają zachowane. Położenie widgetu nadal zapisuje gra.
+**Aktualizacja 0.1.2 → 0.1.3 zachowuje dane.** Nie zmienia schematu profilu i nie resetuje slotów, grup, kłódek, skrótów ani wyglądu. Dane 0.1.1 nadal nie są przenoszone, ale pozostają zachowane. Położenie widgetu nadal zapisuje gra.
 
 ## Pliki i testy
 
 | Plik | Przeznaczenie |
 | --- | --- |
-| `teleporty.user.js` | Loader i dostęp do pamięci Tampermonkey; wersjonowane zasoby 0.1.2. |
+| `teleporty.user.js` | Loader i dostęp do pamięci Tampermonkey; wersjonowane zasoby 0.1.3. |
 | `teleporty.core.js` | Okna, widget, grupy, blokady, import, kolejka i skróty. |
 | `teleporty.css` | Wygląd ograniczony do elementów dodatku. |
 | `assets/widget.png` | Ikona 32 × 32 px z przezroczystością, zachowana bez zmian. |

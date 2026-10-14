@@ -21,7 +21,9 @@
 .tp-scroll { height: 220px; max-height: max(36px, calc(var(--tp-max-height, 90vh) - 210px)); }
 .tp-panel[size-opt="0"] .tp-scroll { height: 140px; }
 .tp-panel[size-opt="2"] .tp-scroll { height: 310px; }
-.tp-config-scroll { height: min(590px, var(--tp-max-height, 75vh)); }
+.tp-config-scroll { height: 420px; max-height: var(--tp-max-height, 75vh); }
+.tp-config[size-opt="0"] .tp-config-scroll { height: 260px; }
+.tp-config[size-opt="2"] .tp-config-scroll { height: 560px; }
 .tp-scroll > .scroll-pane, .tp-config-scroll > .scroll-pane { padding-right: 12px; box-sizing: border-box; }
 .tp-grid { display: grid; grid-template-columns: repeat(7, 36px); gap: 3px; justify-content: center; padding: 2px; }
 .tp-slot.tp-next { outline: 1px solid var(--tp-accent); outline-offset: -1px; }
@@ -29,7 +31,7 @@
 .tp-slot .tp-icon .cooldown { display: none; }
 .tp-slot.tp-unavailable .canvas-icon { opacity: .38; }
 .tp-number { position: absolute; z-index: 2; top: 1px; left: 2px; font-size: 10px; line-height: 12px; color: #fff; text-shadow: 1px 1px #000, -1px -1px #000; pointer-events: none; }
-.tp-cooldown { position: absolute; bottom: 2px; left: 0; right: 0; z-index: 3; text-align: center; color: #ffe3a6; text-shadow: 1px 1px #000; pointer-events: none; font-size: 11px; }
+.tp-cooldown { position: absolute; bottom: 2px; left: 0; right: 0; z-index: 3; text-align: center; color: #ffe3a6; text-shadow: 1px 1px #000; pointer-events: none; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tp-count { margin-top: 6px; }
 .tp-start-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; margin-top: 7px; white-space: nowrap; }
 .tp-start-row .tp-number-input { width: 40px; flex: 0 0 40px; }
@@ -38,7 +40,8 @@
 .tp-import-row { display: flex; gap: 5px; margin-top: 8px; }
 .tp-import-row .tp-button .label { padding: 0 4px; }
 .tp-window .tp-number-input input.default { color: #fff; width: 100%; font-size: 12px; }
-.tp-summary { display: none; position: absolute; left: 154px; right: 28px; top: 0; color: #f0e6d6; font-size: 12px; line-height: 28px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-summary { display: none; position: absolute; left: 154px; right: 28px; top: 0; color: #f0e6d6; font-size: 12px; line-height: 28px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.tp-window .header-label, .tp-window .header-label * { pointer-events: none; }
 .tp-panel.window--collapsed .tp-summary { display: block; }
 .tp-panel.window--collapsed .header-label { position: absolute; left: 91px; top: 0; width: 58px; margin: 0; }
 .tp-panel.window--collapsed .tp-body, .tp-config.window--collapsed .tp-config-scroll { display: none; }

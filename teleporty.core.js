@@ -6,6 +6,8 @@
     const WIDGET = 'tp_queue';
     const LOAD_LOCKS = new Set(['change_location', 'mapLoadedAndAllInit']);
     const MODIFIERS = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']);
+    const OCCUPIED = 'Ten skrót jest już zajęty.';
+    const WINDOW_SIZES = { PANEL: [140, 220, 310], CONFIG: [260, 420, 560], BIND: [300, 340, 380] };
     const defaults = () => ({
         start: 1, auto: false, interval: 120,
         manualKey: { code: 'F9', ctrl: false, alt: false, shift: false, meta: false },
@@ -55,25 +57,51 @@
         const value = symbols[code];
         return Array.isArray(value) ? value[key.shift ? 1 : 0] : value || code.toUpperCase();
     }
+    function registeredKey(value, key, event) {
+        if (typeof value !== 'string' || !value.includes('+')) return false;
+        const parts = value.toUpperCase().split('+').map(s => s.trim());
+        const base = parts.pop();
+        const mods = { ctrl: ['CTRL', 'CONTROL'], shift: ['SHIFT'], alt: ['ALT', 'OPTION'], meta: ['META', 'CMD', 'COMMAND'] };
+        if (parts.some(part => !Object.values(mods).some(names => names.includes(part)))) return false;
+        return Object.entries(mods).every(([name, names]) => key[name] === parts.some(part => names.includes(part)))
+            && (base === key.code.toUpperCase() || base === nativeKey(key, event));
+    }
+    function systemKey(key) {
+        const mods = ['ctrl', 'shift', 'alt', 'meta'].filter(name => key[name]).join('+');
+        const browser = {
+            '': ['F5', 'F11', 'F12'], shift: ['F5', 'Escape'],
+            ctrl: ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyL', 'KeyP', 'KeyS', 'KeyF', 'KeyG', 'KeyK', 'KeyD',
+                'KeyH', 'KeyJ', 'KeyO', 'KeyU', 'Tab', 'PageUp', 'PageDown', 'F5'],
+            'ctrl+shift': ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyP', 'KeyS', 'KeyG', 'KeyD', 'KeyI', 'KeyC', 'KeyJ', 'KeyK', 'Delete', 'Tab'],
+            alt: ['Tab', 'F4', 'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'Home', 'KeyD'],
+            'shift+alt': ['Tab'], 'ctrl+alt': ['Delete'],
+            meta: ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyL', 'KeyP', 'KeyS', 'KeyF', 'KeyG', 'KeyD', 'KeyH', 'KeyJ', 'KeyO', 'KeyU', 'KeyQ', 'Tab', 'Space'],
+            'shift+meta': ['KeyC', 'KeyI', 'KeyJ', 'KeyW', 'KeyT', 'KeyN', 'KeyR'],
+            'alt+meta': ['KeyC', 'KeyI', 'KeyJ', 'Escape']
+        };
+        if (browser[mods]?.includes(key.code)) return true;
+        const platform = root.navigator?.userAgentData?.platform || root.navigator?.platform || '';
+        return /win/i.test(platform) && mods === 'meta' &&
+            ['KeyA', 'KeyB', 'KeyC', 'KeyE', 'KeyG', 'KeyH', 'KeyI', 'KeyK', 'KeyM', 'KeyV', 'KeyX', 'KeyZ'].includes(key.code);
+    }
     function gameConflict(key, engine, event) {
         if (!key) return null;
         const value = nativeKey(key, event);
-        if (['ENTER', 'ESCAPE', 'TAB', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(value)
-            || /^[1-9]$/.test(value)) return 'Ten skrót jest już używany przez Margonem.';
+        if (systemKey(key) || ['ENTER', 'ESCAPE', 'TAB', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(value)
+            || /^[1-9]$/.test(value)) return OCCUPIED;
         const hot = engine.hotKeys;
         if (!hot) return 'Nie można teraz sprawdzić skrótów Margonem. Poczekaj na załadowanie gry.';
+        const rows = hot.getSortedHotKeys?.() || [];
+        if ([...Object.keys(hot.hotKeys || {}), ...rows.map(row => row[0])]
+            .some(value => registeredKey(value, key, event))) return OCCUPIED;
+        // Modified combinations are owned by our capture handlers, including keypress and keyup.
+        if (key.ctrl || key.shift || key.alt || key.meta) return null;
         const moves = ['move_up', 'move_down', 'move_left', 'move_right'];
         if (moves.some(name => String(hot.getKeyByClbName?.(name) || '').toUpperCase() === value))
-            return 'Ten skrót jest już używany przez Margonem. Ruch postaci.';
-        // InputParser processes movement and reserved keys with modifiers, but skips general hotkeys with Ctrl.
-        if (key.ctrl) return null;
-        const rows = hot.getSortedHotKeys?.() || [];
+            return OCCUPIED;
         const row = rows.find(row => String(row[0] || '').toUpperCase() === value);
         const clb = hot.hotKeys?.[value] || row?.[1];
-        if (!clb) return null;
-        const icon = row?.[2];
-        const label = icon && engine.widgetManager.getDefaultWidgetSet()?.[icon]?.txt;
-        return `Ten skrót jest już używany przez Margonem.${label ? ` ${label}` : ''}`;
+        return clb ? OCCUPIED : null;
     }
     const cooldown = (item, now = Date.now() / 1000) => {
         const value = stats(item).timelimit;
@@ -83,6 +111,8 @@
         const end = Number(fields[1]);
         return Number.isFinite(end) ? Math.max(0, Math.ceil(end - now)) : Infinity;
     };
+    const cooldownText = left => left === Infinity ? '?' : left > 0 ?
+        left >= 60 ? `${Math.ceil(left / 60)}m` : `${left}s` : '';
     const needsTarget = item => {
         const s = stats(item);
         return Object.hasOwn(s, 'custom_teleport') && !s.custom_teleport;
@@ -302,7 +332,7 @@
             this.views = new Map();
             this.items = new Map();
             this.held = new Set();
-            this.captureReleases = new Set();
+            this.swallowed = new Map();
             this.capture = null;
             this.syncTimer = null;
             this.operation = null;
@@ -583,8 +613,8 @@
                 manageOpacity: 3, manageShow: false,
                 managePosition: { position: this.e.windowsData.position.CENTER_OR_SAVE_IN_STORAGE },
                 manageCollapse: { defaultVal: false, callbackFn: () => this.fit() },
-                manageSize: { sizeArray: Array.from({ length: kind === 'PANEL' ? 3 : 1 }, () => ({ w: width, h: 'auto' })),
-                    options: { defaultSizeIndex: kind === 'PANEL' ? 1 : 0 }, callback: () => this.fit() },
+                manageSize: { sizeArray: WINDOW_SIZES[kind].map(size => ({ w: kind === 'BIND' ? size : width, h: 'auto' })),
+                    options: { defaultSizeIndex: 1 }, callback: () => this.fit() },
                 ...(kind === 'PANEL' ? { widget: WIDGET, manageConfiguration: { fn: e => this.openConfig(e) } } : {}),
                 onclose: kind === 'BIND' ? () => this.closeCapture() : function () { this.hide(); },
                 onstopdrag: () => this.fit()
@@ -739,24 +769,26 @@
                 const { item, icon } = view;
                 const left = cooldown(item);
                 this.cells[i].toggleClass('tp-unavailable', !this.available(item));
-                this.cells[i].find('.tp-cooldown').text(left === Infinity ? '?' : left > 0 ?
-                    left >= 3600 ? `${Math.ceil(left / 3600)}h` : left >= 60 ? `${Math.ceil(left / 60)}m` : `${left}s` : '');
+                this.cells[i].find('.tp-cooldown').text(cooldownText(left));
                 if (this.hover === i) item.setTip(icon);
             }
-            this.updateSummary();
+            this.updateNext();
         }
-        updateSummary() {
+        updateNext() {
             const next = this.q.find();
             const text = `Następna: ${next ? destination(next.item) : 'brak gotowych'}`;
-            this.summary.text(text).tip(text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
+            this.summary.text(text);
+            const tip = this.panel.$.hasClass('window--collapsed') ? text : '';
+            this.panel.$.find('.draggable-window-element').tip(tip.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
+            this.detail.text(`Następny slot: ${next?.slot ?? 'brak gotowych'} · Początek: ${this.p.config.start} · Interwał: ${this.p.config.interval} s`);
+            this.cells.forEach((cell, i) => cell.toggleClass('tp-next', next?.slot === i + 1));
         }
         render() {
             if (!this.panel || this.dead) return;
             const p = this.p;
             this.status.text({ off: 'Tryb: Ręczny', active: 'Tryb: Auto — Aktywny', paused: 'Tryb: Auto — Pauza' }[p.state]);
             this.panel.$.toggleClass('tp-active', p.state === 'active').toggleClass('tp-paused', p.state === 'paused');
-            this.updateSummary();
-            this.detail.text(`Następny slot: ${p.next} · Początek: ${p.config.start} · Interwał: ${p.config.interval} s`);
+            this.updateNext();
             this.pendingText.text(this.q.flight ? this.q.flight.done ?
                 'Brak odpowiedzi. Poczekaj lub odśwież grę przed kolejną próbą.' : 'Czekam na odpowiedź gry…' : '');
             this.manualButton.toggleClass('disable', p.state !== 'off' || Boolean(this.q.flight)).attr('aria-disabled', p.state !== 'off' || Boolean(this.q.flight));
@@ -766,7 +798,7 @@
             this.selection.text(`Wybrany slot: ${this.selected == null ? '—' : this.selected + 1}`);
             this.unlockButton.toggle(p.locked.some(Boolean));
             this.cells.forEach((cell, i) => {
-                cell.toggleClass('tp-next', i === p.next - 1).toggleClass('tp-selected', i === this.selected)
+                cell.toggleClass('tp-selected', i === this.selected)
                     .toggleClass('tp-locked', p.locked[i]);
             });
             for (const wnd of this.windows) for (const k of ['background', 'border', 'accent']) wnd.$[0].style.setProperty(`--tp-${k}`, p.config[k]);
@@ -869,7 +901,7 @@
         conflict(name, key, event) {
             if (!keyValid(key)) return 'Naciśnij poprawną kombinację klawiszy.';
             const other = name === 'manualKey' ? 'autoKey' : 'manualKey';
-            if (sameKey(key, this.p.config[other])) return 'Ten skrót jest już używany przez teleporty.';
+            if (sameKey(key, this.p.config[other])) return OCCUPIED;
             return gameConflict(key, this.e, event) || '';
         }
         openCapture(name) {
@@ -910,6 +942,12 @@
             this.save(); this.closeCapture(); this.render();
         }
         closeCapture() { this.capture = null; this.bindWindow?.hide(); }
+        textInput(e) {
+            return e.composedPath().some(node => node.matches?.('input, textarea, select, magic_input, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'));
+        }
+        keyReady() {
+            return !this.e.catchChar && !this.e.settings?.getBlockInput?.() && this.loaded() && !this.blocked();
+        }
         togglePanel() {
             this.panel.toggle();
             if (this.panel.isShow()) { this.panel.setWndOnPeak(); this.sync(); this.fit(); }
@@ -938,38 +976,46 @@
             }, true);
             this.listen(this.win.document, 'pointercancel', () => { incoming = null; }, true);
             this.listen(this.win.document, 'keydown', e => {
-                if (!this.context()) return;
+                if (!this.context() || e.defaultPrevented || this.e.catchChar) return;
+                const swallow = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+                if (this.swallowed.has(e.code)) { swallow(); return; }
                 if (this.capture) {
-                    e.preventDefault(); e.stopImmediatePropagation();
+                    swallow();
                     this.held.add(e.code);
-                    this.captureReleases.add(e.code);
+                    this.swallowed.set(e.code, nativeKey(keyOf(e)));
                     if (MODIFIERS.has(e.code) || e.repeat) return;
                     if (e.code === 'Escape') { this.closeCapture(); return; }
                     this.capture.key = keyOf(e); this.previewCapture(e); return;
                 }
                 if (e.repeat || this.held.has(e.code)) return;
                 this.held.add(e.code);
-                if (e.composedPath().some(node => node.matches?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'))) return;
+                if (this.textInput(e) || !this.keyReady()) return;
                 if (['Space', 'Enter'].includes(e.code) && e.composedPath().some(node => node.matches?.('[role="button"], [role="checkbox"]'))) return;
                 const key = keyOf(e);
-                if (!sameKey(key, this.p.config.manualKey) && !sameKey(key, this.p.config.autoKey)) return;
-                if (gameConflict(key, this.e, e)) return;
-                if (sameKey(key, this.p.config.manualKey) && this.p.state === 'off') {
-                    e.preventDefault(); e.stopImmediatePropagation(); void this.q.manual();
-                } else if (sameKey(key, this.p.config.autoKey) && this.p.config.auto) {
-                    e.preventDefault(); e.stopImmediatePropagation(); void this.q.toggle();
-                }
+                const name = sameKey(key, this.p.config.manualKey) ? 'manualKey' : sameKey(key, this.p.config.autoKey) ? 'autoKey' : null;
+                if (!name || this.conflict(name, key, e)) return;
+                const allowed = name === 'manualKey' ? this.p.state === 'off' && !this.q.flight :
+                    this.p.config.auto && (this.p.state === 'active' || !this.q.flight);
+                if (!allowed) return;
+                this.swallowed.set(e.code, nativeKey(key, e)); swallow();
+                if (name === 'manualKey') void this.q.manual(); else void this.q.toggle();
             }, true);
             this.listen(this.win.document, 'keypress', e => {
-                if (this.capture || this.captureReleases.has(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); }
+                if (e.defaultPrevented || this.e.catchChar) return;
+                const owned = this.swallowed.has(e.code) || (!e.code && [...this.swallowed.values()].includes(nativeKey(keyOf(e))));
+                if (this.capture || owned) { e.preventDefault(); e.stopImmediatePropagation(); }
             }, true);
             this.listen(this.win.document, 'keyup', e => {
-                if (this.capture || this.captureReleases.has(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); }
-                this.captureReleases.delete(e.code); this.held.delete(e.code);
+                // A key pressed before opening capture still needs its native release.
+                const owned = this.swallowed.has(e.code);
+                if (!e.defaultPrevented && !this.e.catchChar && (owned || (this.capture && !this.held.has(e.code)))) {
+                    e.preventDefault(); e.stopImmediatePropagation();
+                }
+                this.swallowed.delete(e.code); this.held.delete(e.code);
             }, true);
-            this.listen(this.win, 'blur', () => { this.held.clear(); this.captureReleases.clear(); });
+            this.listen(this.win, 'blur', () => { this.held.clear(); this.swallowed.clear(); });
             this.listen(this.win, 'resize', () => this.fit());
-            this.listen(this.win.document, 'visibilitychange', () => { this.held.clear(); if (!this.win.document.hidden) this.overlays(); });
+            this.listen(this.win.document, 'visibilitychange', () => { this.held.clear(); this.swallowed.clear(); if (!this.win.document.hidden) this.overlays(); });
         }
         widget() {
             const manager = this.e.widgetManager;
@@ -1030,6 +1076,7 @@
                 if (wnd.checkPassTheScreenBounds()) { wnd.updatePos(); wnd.saveWindowPosition(); }
             }
             this.updateScroll();
+            if (this.summary) this.updateNext();
         }
         rebuild() {
             if (!this.context()) return;
@@ -1057,7 +1104,7 @@
             for (const { item } of this.views.values()) this.e.items.deleteViewIconIfExist(item.id, VIEW);
             for (const cell of this.cells || []) { cell.pointerDroppable({ disabled: true }); cell.pointerDraggable('cancel'); cell.pointerDraggable('destroy'); }
             for (const off of this.clean.reverse()) off();
-            this.items.clear(); this.views.clear(); this.held.clear();
+            this.items.clear(); this.views.clear(); this.held.clear(); this.swallowed.clear();
         }
     }
 
@@ -1118,5 +1165,5 @@
         return handle;
     }
     root.TeleportQueue = Object.freeze({ boot, Queue, App, load, defaults, cooldown, teleport, readyItem,
-        needsTarget, sameKey, keyOf, advance, profileKey, matches, ready, groupKey, groupOf, destination, gameConflict, nativeKey });
+        needsTarget, sameKey, keyOf, advance, profileKey, matches, ready, groupKey, groupOf, destination, gameConflict, nativeKey, cooldownText });
 })(globalThis);

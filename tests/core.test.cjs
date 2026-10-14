@@ -190,8 +190,8 @@ test('loader przekazuje unsafeWindow i zasoby z odrębnego sandboxu bez globalne
 });
 test('metadane, adresy i wersje zasobów są gotowe do instalacji', () => {
     const text = fs.readFileSync(require.resolve('../teleporty.user.js'), 'utf8');
-    assert(text.includes('@version      0.1.2')); assert(text.includes('@author       Doiua'));
-    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.2`));
+    assert(text.includes('@version      0.1.3')); assert(text.includes('@author       Doiua'));
+    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.3`));
     assert(!text.includes('OWNER')); assert(!text.includes('REPO'));
     assert.equal((text.match(/@match /g) || []).length, 2);
 });
@@ -258,12 +258,15 @@ const key = (code, extra = {}) => ({ code, ctrl: false, alt: false, shift: false
 const hotEngine = () => ({ hotKeys: { hotKeys: { Q: 'attack', F9: 'other' },
     getSortedHotKeys: () => [['Q', 'attack', false, 'fight']], getKeyByClbName: name => name === 'move_up' ? 'W' : '' },
     widgetManager: { getDefaultWidgetSet: () => ({}) } });
-test('natywne konflikty: modyfikatory nie usuwają ruchu i zarezerwowanych akcji', () => {
+test('0.1.3: bazowa litera i bezpieczna kombinacja to oddzielne skróty', () => {
     const e = hotEngine();
-    for (const code of ['KeyW', 'ArrowLeft', 'Digit1', 'Numpad7', 'Enter', 'Escape', 'Tab']) {
+    for (const code of ['ArrowLeft', 'Digit1', 'Numpad7', 'Enter', 'Escape', 'Tab']) {
         for (const mod of [{}, { ctrl: true }, { alt: true }, { meta: true }]) assert(T.gameConflict(key(code, mod), e));
     }
-    assert(T.gameConflict(key('KeyQ', { shift: true }), e)); assert(T.gameConflict(key('KeyQ', { alt: true }), e));
+    assert.equal(T.gameConflict(key('KeyW'), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyW', { shift: true }), e), null);
+    assert.equal(T.gameConflict(key('KeyQ', { shift: true }), e), null);
+    assert.equal(T.gameConflict(key('KeyQ', { alt: true }), e), null);
     assert.equal(T.gameConflict(key('KeyQ', { ctrl: true }), e), null);
     assert.equal(T.gameConflict(key('Digit1', { shift: true }), e), null);
 });
@@ -272,4 +275,52 @@ test('normalizacja używa rzeczywistego key; konflikt może powstać po zapisani
     assert(T.gameConflict(k, e)); assert.equal(T.nativeKey(key('KeyZ'), { key: 'ą' }), 'Ą');
     delete e.hotKeys.hotKeys.F9; assert.equal(T.gameConflict(key('F9'), e), null);
     e.hotKeys.hotKeys.F9 = 'action'; assert(T.gameConflict(key('F9'), e));
+});
+test('0.1.3: wykrywalna pełna kombinacja w rejestrze Engine blokuje tylko siebie', () => {
+    const e = hotEngine(); e.hotKeys.hotKeys['Shift+KeyC'] = 'another_addon';
+    assert.equal(T.gameConflict(key('KeyC', { shift: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyC', { alt: true }), e), null);
+    e.hotKeys.getSortedHotKeys = () => [['Ctrl+G', 'another_addon', false, 'other']];
+    assert.equal(T.gameConflict(key('KeyG', { ctrl: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyG', { shift: true }), e), null);
+});
+test('0.1.3: znane skróty przeglądarki/systemu nie stają się bindem', () => {
+    const e = hotEngine();
+    for (const k of [key('F5'), key('KeyW', { ctrl: true }), key('KeyR', { meta: true }), key('F4', { alt: true }), key('Tab', { alt: true })]) {
+        assert.equal(T.gameConflict(k, e), 'Ten skrót jest już zajęty.');
+    }
+    for (const code of ['KeyC', 'KeyK', 'KeyG']) {
+        e.hotKeys.hotKeys[code.slice(3)] = 'native';
+        assert(T.gameConflict(key(code), e));
+        for (const mod of [{ shift: true }, { alt: true }, { ctrl: true, alt: true }]) {
+            assert.equal(T.gameConflict(key(code, mod), e), null);
+        }
+    }
+    assert.equal(T.gameConflict(key('KeyC', { ctrl: true }), e), null);
+    assert.equal(T.gameConflict(key('KeyC', { ctrl: true, shift: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyK', { ctrl: true, shift: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyC', { ctrl: true, shift: true, alt: true }), e), null);
+    assert.equal(T.gameConflict(key('F8', { meta: true }), e), null);
+});
+test('0.1.3: nakładka pokazuje sekundy i minuty bez godzin', () => {
+    for (const [seconds, text] of [[15, '15s'], [59, '59s'], [60, '1m'], [90, '2m'], [1800, '30m'],
+        [3600, '60m'], [5400, '90m'], [7500, '125m'], [10800, '180m'], [0, ''], [Infinity, '?']]) {
+        assert.equal(T.cooldownText(seconds), text);
+    }
+});
+test('0.1.3: wspólny wybór 1 → 2 → 4 → 6 → 1, bez przesuwania przy podglądzie', async () => {
+    const f = fixture(); for (const n of [1, 2, 4, 5, 6]) f.put(n); f.p.locked[4] = true;
+    for (const expected of [1, 2, 4, 6, 1]) {
+        const next = f.p.next; assert.equal(f.q.find().slot, expected); assert.equal(f.p.next, next);
+        await f.q.manual(); assert.equal(f.used.at(-1), String(expected));
+    }
+});
+test('0.1.3: zniknięcie wskazanego, blokada i koniec cooldownu zmieniają wybór bez zapisu next', () => {
+    const f = fixture(); f.q.setStart(12); f.put(1); f.put(12); f.put(20); f.put(60);
+    f.inventory.delete('12'); assert.equal(f.q.find().slot, 20);
+    f.p.locked[19] = true; assert.equal(f.q.find().slot, 60);
+    f.put(20, item(20, 'teleport=1;timelimit=180,' + (Date.now() / 1000 + 100))); f.p.locked[19] = false;
+    assert.equal(f.q.find().slot, 60); f.put(20); assert.equal(f.q.find().slot, 20); assert.equal(f.p.next, 12);
+    f.inventory.delete('20'); f.inventory.delete('60'); assert.equal(f.q.find(), null); assert.equal(f.p.next, 12);
+    f.put(60); const restored = T.load(f.p); assert.equal(restored.next, 12);
 });
