@@ -107,6 +107,8 @@ Playwright musi być dostępny w Node. `TP_PROBE=ctrl` uruchamia tylko nowe scen
 
 Wydanie jest publikowane w main w dwóch etapach: najpierw core, testy i dokumentacja, następnie loader 0.1.4 przypięty do opublikowanego commita zasobów. Loader i każdy @require/@resource są weryfikowane przez HTTP i porównanie SHA-256 z lokalnym commitem Git. Ikona i CSS zachowują zawartość, ale otrzymują spójne adresy wydania 0.1.4. UpdateURL i downloadURL nadal wskazują aktualny loader na main. Bezpośredni link i SHA publikacji są podawane w odpowiedzi końcowej.
 
+Commit zasobów: [`c9c9f41797794d8b2e20905004c929fbfc4d626e`](https://github.com/Doiua97/teleport-queue/commit/c9c9f41797794d8b2e20905004c929fbfc4d626e). Publiczne przypięte adresy core, CSS i ikony z `?v=0.1.4` zwróciły HTTP 200, a ich SHA-256 zgadzają się z lokalnym commitem. Zawartość CSS i ikony jest identyczna z 0.1.3. Loader 0.1.4 jest publikowany w osobnym końcowym commicie i wskazuje ten SHA zasobów.
+
 ## Do sprawdzenia w zalogowanym Margonem
 
 Nie instalowano dodatku na rzeczywistej postaci i nie zmieniano prawdziwych przedmiotów.
