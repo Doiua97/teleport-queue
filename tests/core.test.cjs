@@ -190,8 +190,8 @@ test('loader przekazuje unsafeWindow i zasoby z odrębnego sandboxu bez globalne
 });
 test('metadane, adresy i wersje zasobów są gotowe do instalacji', () => {
     const text = fs.readFileSync(require.resolve('../teleporty.user.js'), 'utf8');
-    assert(text.includes('@version      0.1.3')); assert(text.includes('@author       Doiua'));
-    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.3`));
+    assert(text.includes('@version      0.1.4')); assert(text.includes('@author       Doiua'));
+    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.4`));
     assert(!text.includes('OWNER')); assert(!text.includes('REPO'));
     assert.equal((text.match(/@match /g) || []).length, 2);
 });
@@ -297,7 +297,7 @@ test('0.1.3: znane skróty przeglądarki/systemu nie stają się bindem', () => 
         }
     }
     assert.equal(T.gameConflict(key('KeyC', { ctrl: true }), e), null);
-    assert.equal(T.gameConflict(key('KeyC', { ctrl: true, shift: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyC', { ctrl: true, shift: true }), e), null);
     assert.equal(T.gameConflict(key('KeyK', { ctrl: true, shift: true }), e), 'Ten skrót jest już zajęty.');
     assert.equal(T.gameConflict(key('KeyC', { ctrl: true, shift: true, alt: true }), e), null);
     assert.equal(T.gameConflict(key('F8', { meta: true }), e), null);
@@ -323,4 +323,39 @@ test('0.1.3: zniknięcie wskazanego, blokada i koniec cooldownu zmieniają wybó
     assert.equal(f.q.find().slot, 60); f.put(20); assert.equal(f.q.find().slot, 20); assert.equal(f.p.next, 12);
     f.inventory.delete('20'); f.inventory.delete('60'); assert.equal(f.q.find(), null); assert.equal(f.p.next, 12);
     f.put(60); const restored = T.load(f.p); assert.equal(restored.next, 12);
+});
+test('0.1.4: macierz Ctrl+A–Z i Ctrl+Shift+A–Z rozróżnia zarezerwowane kombinacje', () => {
+    const e = hotEngine();
+    for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        e.hotKeys.hotKeys[letter] = 'native';
+        for (const shift of [false, true]) {
+            const reserved = (shift ? 'KNTW' : 'NTW').includes(letter);
+            assert.equal(T.gameConflict(key('Key' + letter, { ctrl: true, shift }), e), reserved ? 'Ten skrót jest już zajęty.' : null,
+                'Ctrl+' + (shift ? 'Shift+' : '') + letter);
+        }
+    }
+});
+test('0.1.4: AltGraph nie jest Ctrl+Alt, a stare klucze v2 nie wymagają migracji', () => {
+    const e = { code: 'KeyA', key: 'ą', ctrlKey: true, altKey: true, shiftKey: false, metaKey: false,
+        getModifierState: name => name === 'AltGraph' };
+    const altgr = T.keyOf(e); const ctrlalt = key('KeyA', { ctrl: true, alt: true });
+    assert.equal(altgr.altGraph, true); assert(!T.sameKey(altgr, ctrlalt));
+    assert(T.sameKey(ctrlalt, { ...ctrlalt, altGraph: false }));
+    assert.equal(T.gameConflict(altgr, hotEngine(), e), 'Naciśnij poprawną kombinację klawiszy.');
+    const p = T.load(null); p.config.manualKey = ctrlalt; assert.deepEqual(T.load(p).config.manualKey, ctrlalt);
+    const genuine = T.keyOf({ ...e, key: 'a', getModifierState: () => false });
+    assert(T.sameKey(genuine, ctrlalt)); assert.equal(T.gameConflict(genuine, hotEngine()), null);
+});
+test('0.1.4: jawne Ctrl+K nie blokuje K ani Ctrl+Shift+K w innym zestawie modyfikatorów', () => {
+    const e = hotEngine(); e.hotKeys.hotKeys['Control+KeyB'] = 'foreign'; e.hotKeys.hotKeys['Ctrl+K'] = 'foreign';
+    assert.equal(T.gameConflict(key('KeyK', { ctrl: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyB', { ctrl: true }), e), 'Ten skrót jest już zajęty.');
+    assert.equal(T.gameConflict(key('KeyB', { ctrl: true, shift: true }), e), null);
+    assert.equal(T.gameConflict(key('KeyK'), e), null);
+});
+test('0.1.4: nieanulowalny event nie uruchamia konkurencyjnej akcji', () => {
+    const app = { p: { config: { autoKey: key('F10') } }, e: hotEngine() };
+    const ctrlb = key('KeyB', { ctrl: true });
+    assert.equal(T.App.prototype.conflict.call(app, 'manualKey', ctrlb, { cancelable: false }), 'Ten skrót jest już zajęty.');
+    assert.equal(T.App.prototype.conflict.call(app, 'manualKey', ctrlb, { cancelable: true }), '');
 });

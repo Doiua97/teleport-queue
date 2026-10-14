@@ -7,6 +7,7 @@
     const LOAD_LOCKS = new Set(['change_location', 'mapLoadedAndAllInit']);
     const MODIFIERS = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']);
     const OCCUPIED = 'Ten skrót jest już zajęty.';
+    const INVALID_KEY = 'Naciśnij poprawną kombinację klawiszy.';
     const WINDOW_SIZES = { PANEL: [140, 220, 310], CONFIG: [260, 420, 560], BIND: [300, 340, 380] };
     const defaults = () => ({
         start: 1, auto: false, interval: 120,
@@ -18,10 +19,14 @@
     const integer = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
     const keyValid = key => key === null || (key && typeof key.code === 'string' && /^[A-Za-z][A-Za-z0-9]*$/.test(key.code)
         && key.code !== 'Unidentified' && !MODIFIERS.has(key.code)
+        && (key.altGraph == null || key.altGraph === false)
         && ['ctrl', 'alt', 'shift', 'meta'].every(name => typeof key[name] === 'boolean'));
-    const sameKey = (a, b) => Boolean(a && b && ['code', 'ctrl', 'alt', 'shift', 'meta'].every(k => a[k] === b[k]));
-    const keyOf = e => ({ code: e.code, key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey });
-    const keyText = key => key ? [key.ctrl && 'Ctrl', key.alt && 'Alt', key.shift && 'Shift', key.meta && 'Meta',
+    const sameKey = (a, b) => Boolean(a && b && ['code', 'ctrl', 'alt', 'shift', 'meta'].every(k => a[k] === b[k])
+        && Boolean(a.altGraph) === Boolean(b.altGraph));
+    const altGraphOf = e => Boolean(e?.getModifierState?.('AltGraph') || e?.key === 'AltGraph');
+    const keyOf = e => ({ code: e.code, key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey,
+        ...(altGraphOf(e) ? { altGraph: true } : {}) });
+    const keyText = key => key ? [key.altGraph && 'AltGr', !key.altGraph && key.ctrl && 'Ctrl', !key.altGraph && key.alt && 'Alt', key.shift && 'Shift', key.meta && 'Meta',
         key.code.replace(/^Key/, '').replace(/^Digit/, '')].filter(Boolean).join(' + ') : 'Brak';
     const profileKey = e => `margo-tp:v2:${e.worldConfig.getWorldName()}:${e.hero.d.id}`;
     const stats = item => item.parseStats();
@@ -58,6 +63,7 @@
         return Array.isArray(value) ? value[key.shift ? 1 : 0] : value || code.toUpperCase();
     }
     function registeredKey(value, key, event) {
+        if (key.altGraph || altGraphOf(event)) return false;
         if (typeof value !== 'string' || !value.includes('+')) return false;
         const parts = value.toUpperCase().split('+').map(s => s.trim());
         const base = parts.pop();
@@ -70,9 +76,8 @@
         const mods = ['ctrl', 'shift', 'alt', 'meta'].filter(name => key[name]).join('+');
         const browser = {
             '': ['F5', 'F11', 'F12'], shift: ['F5', 'Escape'],
-            ctrl: ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyL', 'KeyP', 'KeyS', 'KeyF', 'KeyG', 'KeyK', 'KeyD',
-                'KeyH', 'KeyJ', 'KeyO', 'KeyU', 'Tab', 'PageUp', 'PageDown', 'F5'],
-            'ctrl+shift': ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyP', 'KeyS', 'KeyG', 'KeyD', 'KeyI', 'KeyC', 'KeyJ', 'KeyK', 'Delete', 'Tab'],
+            ctrl: ['KeyW', 'KeyT', 'KeyN', 'Tab', 'PageUp', 'PageDown', 'F4', 'F5'],
+            'ctrl+shift': ['KeyW', 'KeyT', 'KeyN', 'KeyK', 'Delete', 'Tab', 'PageUp', 'PageDown'],
             alt: ['Tab', 'F4', 'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'Home', 'KeyD'],
             'shift+alt': ['Tab'], 'ctrl+alt': ['Delete'],
             meta: ['KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyL', 'KeyP', 'KeyS', 'KeyF', 'KeyG', 'KeyD', 'KeyH', 'KeyJ', 'KeyO', 'KeyU', 'KeyQ', 'Tab', 'Space'],
@@ -86,6 +91,7 @@
     }
     function gameConflict(key, engine, event) {
         if (!key) return null;
+        if (key.altGraph || altGraphOf(event)) return INVALID_KEY;
         const value = nativeKey(key, event);
         if (systemKey(key) || ['ENTER', 'ESCAPE', 'TAB', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT'].includes(value)
             || /^[1-9]$/.test(value)) return OCCUPIED;
@@ -333,6 +339,7 @@
             this.items = new Map();
             this.held = new Set();
             this.swallowed = new Map();
+            this.altGraph = false;
             this.capture = null;
             this.syncTimer = null;
             this.operation = null;
@@ -899,7 +906,8 @@
             this.fit();
         }
         conflict(name, key, event) {
-            if (!keyValid(key)) return 'Naciśnij poprawną kombinację klawiszy.';
+            if (!keyValid(key) || altGraphOf(event)) return INVALID_KEY;
+            if (event?.cancelable === false) return OCCUPIED;
             const other = name === 'manualKey' ? 'autoKey' : 'manualKey';
             if (sameKey(key, this.p.config[other])) return OCCUPIED;
             return gameConflict(key, this.e, event) || '';
@@ -977,6 +985,8 @@
             this.listen(this.win.document, 'pointercancel', () => { incoming = null; }, true);
             this.listen(this.win.document, 'keydown', e => {
                 if (!this.context() || e.defaultPrevented || this.e.catchChar) return;
+                if (e.code === 'AltRight' && altGraphOf(e)) this.altGraph = true;
+                const key = { ...keyOf(e), ...((this.altGraph || altGraphOf(e)) ? { altGraph: true } : {}) };
                 const swallow = () => { e.preventDefault(); e.stopImmediatePropagation(); };
                 if (this.swallowed.has(e.code)) { swallow(); return; }
                 if (this.capture) {
@@ -985,13 +995,13 @@
                     this.swallowed.set(e.code, nativeKey(keyOf(e)));
                     if (MODIFIERS.has(e.code) || e.repeat) return;
                     if (e.code === 'Escape') { this.closeCapture(); return; }
-                    this.capture.key = keyOf(e); this.previewCapture(e); return;
+                    this.capture.key = key; this.previewCapture(e); return;
                 }
                 if (e.repeat || this.held.has(e.code)) return;
                 this.held.add(e.code);
+                if (key.altGraph) return;
                 if (this.textInput(e) || !this.keyReady()) return;
                 if (['Space', 'Enter'].includes(e.code) && e.composedPath().some(node => node.matches?.('[role="button"], [role="checkbox"]'))) return;
-                const key = keyOf(e);
                 const name = sameKey(key, this.p.config.manualKey) ? 'manualKey' : sameKey(key, this.p.config.autoKey) ? 'autoKey' : null;
                 if (!name || this.conflict(name, key, e)) return;
                 const allowed = name === 'manualKey' ? this.p.state === 'off' && !this.q.flight :
@@ -1012,10 +1022,11 @@
                     e.preventDefault(); e.stopImmediatePropagation();
                 }
                 this.swallowed.delete(e.code); this.held.delete(e.code);
+                if (e.code === 'AltRight') this.altGraph = false;
             }, true);
-            this.listen(this.win, 'blur', () => { this.held.clear(); this.swallowed.clear(); });
+            this.listen(this.win, 'blur', () => { this.held.clear(); this.swallowed.clear(); this.altGraph = false; });
             this.listen(this.win, 'resize', () => this.fit());
-            this.listen(this.win.document, 'visibilitychange', () => { this.held.clear(); this.swallowed.clear(); if (!this.win.document.hidden) this.overlays(); });
+            this.listen(this.win.document, 'visibilitychange', () => { this.held.clear(); this.swallowed.clear(); this.altGraph = false; if (!this.win.document.hidden) this.overlays(); });
         }
         widget() {
             const manager = this.e.widgetManager;

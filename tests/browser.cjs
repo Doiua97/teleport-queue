@@ -264,6 +264,140 @@ async function regressions(page, check) {
     });
 }
 
+async function ctrlRegressions(page, check) {
+    await check('0.1.4: dostępne Ctrl+A–Z i Ctrl+Shift+A–Z zapisują i wykonują jeden skrót', async () => {
+        await resetCase(page);
+        for (const shift of [false, true]) for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
+            if ((shift ? 'kntw' : 'ntw').includes(letter)) continue;
+            const combination = 'Control+' + (shift ? 'Shift+' : '') + letter;
+            await setBind(page, combination);
+            assert.equal(await page.evaluate(() => app.p.config.manualKey.ctrl), true);
+            const before = await page.evaluate(() => ({ requests: requests.length, game: gameActions }));
+            await page.keyboard.press(combination);
+            assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })),
+                { requests: before.requests + 1, game: before.game }, combination);
+            assert.equal(await page.evaluate(() => input.getMoveDirection()), null);
+            assert.equal(await page.evaluate(() => app.swallowed.size), 0);
+        }
+        await setBind(page, 'Control+k');
+        const n = await page.evaluate(() => ({ requests: requests.length, game: gameActions }));
+        await page.keyboard.press('k');
+        assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), { requests: n.requests, game: n.game + 1 });
+        await page.evaluate(() => app.openCapture('manualKey')); await page.keyboard.press('Control+w'); await page.evaluate(() => app.saveCapture());
+        assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już zajęty.');
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyK'); await page.keyboard.press('Escape');
+    });
+    await check('0.1.4: Ctrl+B i Ctrl+Shift+B rozdzielają ręczny, automat i przyciski', async () => {
+        await resetCase(page); await setBind(page, 'Control+b'); await setBind(page, 'Control+Shift+b', 'autoKey');
+        assert.equal(await page.evaluate(() => app.fields.manualKey.find('.label').text()), 'Ctrl + B');
+        assert.equal(await page.evaluate(() => app.fields.autoKey.find('.label').text()), 'Ctrl + Shift + B');
+        const n = await page.evaluate(() => requests.length);
+        await page.locator('.tp-controls .tp-button').first().click(); await page.keyboard.press('Control+b');
+        assert.equal(await page.evaluate(() => requests.length), n + 2);
+        await page.keyboard.press('Control+Shift+b'); assert.equal(await page.evaluate(() => app.p.state), 'active');
+        assert.equal(await page.evaluate(() => requests.length), n + 3);
+        await page.keyboard.press('Control+b'); assert.equal(await page.evaluate(() => requests.length), n + 3);
+        await page.keyboard.press('Control+Shift+b'); assert.equal(await page.evaluate(() => app.p.state), 'paused');
+        await page.keyboard.press('Control+Shift+b'); assert.equal(await page.evaluate(() => requests.length), n + 4);
+        await page.locator('.tp-controls .tp-button').last().click(); assert.equal(await page.evaluate(() => app.p.state), 'off');
+        await page.locator('.tp-controls .tp-button').nth(1).click(); assert.equal(await page.evaluate(() => requests.length), n + 5);
+        await page.locator('.tp-controls .tp-button').last().click();
+        await page.evaluate(() => app.openCapture('autoKey')); await page.keyboard.press('Control+b'); await page.evaluate(() => app.saveCapture());
+        assert.equal(await page.evaluate(() => app.bindError.text()), 'Ten skrót jest już zajęty.');
+        await page.locator('.tp-bind .tp-button').filter({ hasText: 'Anuluj' }).click();
+        assert.equal(await page.evaluate(() => app.p.config.autoKey.shift), true);
+        await page.evaluate(() => app.configWindow.hide());
+        const before = await page.evaluate(() => requests.length);
+        await page.keyboard.down('Control'); await page.keyboard.down('b'); await page.keyboard.down('b'); await page.keyboard.down('b');
+        await page.keyboard.up('b'); await page.keyboard.up('Control'); assert.equal(await page.evaluate(() => requests.length), before + 1);
+        assert.equal(await page.evaluate(() => app.swallowed.size), 0);
+        await page.keyboard.down('Control'); await page.keyboard.down('Shift'); await page.keyboard.down('b'); await page.keyboard.down('b'); await page.keyboard.down('b');
+        await page.keyboard.up('b'); await page.keyboard.up('Shift'); await page.keyboard.up('Control');
+        assert.equal(await page.evaluate(() => requests.length), before + 2); assert.equal(await page.evaluate(() => app.p.state), 'active');
+        await page.keyboard.press('Control+Shift+b'); assert.equal(await page.evaluate(() => app.p.state), 'paused');
+        assert.equal(await page.evaluate(() => requests.length), before + 2); await page.evaluate(() => app.q.stop());
+    });
+    await check('0.1.4: Ctrl w edycji i na czacie nie wykonuje teleportu; Ctrl+LPM zachowane', async () => {
+        await resetCase(page); await setBind(page, 'Control+b');
+        for (const tag of ['input', 'textarea', 'magic_input', 'div']) {
+            await page.evaluate(tag => { const el = document.createElement(tag); el.id = 'chat-input'; el.tabIndex = 0;
+                if (tag === 'div') el.contentEditable = 'true'; document.body.append(el); el.focus(); }, tag);
+            const n = await page.evaluate(() => requests.length); await page.keyboard.press('Control+b');
+            assert.equal(await page.evaluate(() => requests.length), n); await page.evaluate(() => document.querySelector('#chat-input').remove());
+        }
+        const n = await page.evaluate(() => requests.length);
+        await page.locator('.tp-slot').nth(3).click({ modifiers: ['Control'] }); assert.equal(await page.evaluate(() => app.p.locked[3]), true);
+        await page.locator('.tp-slot').nth(3).click({ modifiers: ['Control'] }); assert.equal(await page.evaluate(() => app.p.locked[3]), false);
+        assert.equal(await page.evaluate(() => requests.length), n);
+        await page.evaluate(() => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', key: 'b', ctrlKey: true, bubbles: true, cancelable: false }));
+            document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyB', key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
+        }); assert.equal(await page.evaluate(() => requests.length), n);
+    });
+    await check('0.1.4: AltGr jest pisaniem, a jawny Ctrl+Alt zachowuje własną kombinację', async () => {
+        await resetCase(page); await setBind(page, 'Control+Alt+a');
+        const n = await page.evaluate(() => ({ requests: requests.length, game: gameActions }));
+        const result = await page.evaluate(() => {
+            window.sendAltGr = (target, explicit = true, key = 'ą') => {
+                const base = { ctrlKey: true, altKey: true, bubbles: true, cancelable: true };
+                target.dispatchEvent(new KeyboardEvent('keydown', { ...base, code: 'AltRight', key: 'AltGraph', modifierAltGraph: true }));
+                let allowed = true;
+                for (const type of ['keydown', 'keypress', 'keyup']) {
+                    const event = new KeyboardEvent(type, { ...base, code: 'KeyA', key, modifierAltGraph: explicit });
+                    target.dispatchEvent(event); allowed &&= !event.defaultPrevented;
+                }
+                target.dispatchEvent(new KeyboardEvent('keyup', { ...base, code: 'AltRight', key: 'AltGraph', altKey: false, ctrlKey: false }));
+                return allowed;
+            };
+            const standard = sendAltGr(document); const fallback = sendAltGr(document, false);
+            return { standard, fallback, released: app.altGraph === false && app.swallowed.size === 0 };
+        }); assert(result.standard && result.fallback && result.released);
+        assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), n);
+        await page.evaluate(() => { const input = document.createElement('input'); input.id = 'altgr-input'; document.body.append(input); input.focus(); });
+        assert.equal(await page.evaluate(() => sendAltGr(document.querySelector('#altgr-input'))), true);
+        await page.keyboard.insertText('ąęłóśźżćń'); assert.equal(await page.locator('#altgr-input').inputValue(), 'ąęłóśźżćń');
+        await page.evaluate(() => document.querySelector('#altgr-input').remove());
+        await page.evaluate(() => app.openCapture('manualKey')); await page.evaluate(() => sendAltGr(document, true, 'w'));
+        assert.equal(await page.evaluate(() => app.bindPreview.text()), 'AltGr + A');
+        assert.equal(await page.evaluate(() => app.bindError.text()), 'Naciśnij poprawną kombinację klawiszy.');
+        await page.evaluate(() => app.saveCapture()); assert.equal(await page.evaluate(() => Boolean(app.capture)), true);
+        assert.deepEqual(await page.evaluate(() => ({ requests: requests.length, game: gameActions })), n);
+        await page.locator('.tp-bind .tp-button').filter({ hasText: 'Anuluj' }).click();
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.altGraph), undefined);
+        await page.evaluate(() => app.configWindow.hide()); await page.locator('.tp-slot').first().click(); await page.keyboard.press('Control+Alt+a');
+        assert.equal(await page.evaluate(() => requests.length), n.requests + 1);
+        assert.equal(await page.evaluate(() => app.altGraph), false);
+        await setBind(page, 'Control+b'); await setBind(page, 'Control+Alt+a', 'autoKey');
+        const beforeAuto = await page.evaluate(() => requests.length); await page.evaluate(() => sendAltGr(document));
+        assert.equal(await page.evaluate(() => app.p.state), 'off'); assert.equal(await page.evaluate(() => requests.length), beforeAuto);
+        await page.keyboard.press('Control+Alt+a'); assert.equal(await page.evaluate(() => app.p.state), 'active');
+        assert.equal(await page.evaluate(() => requests.length), beforeAuto + 1); await page.evaluate(() => sendAltGr(document));
+        assert.equal(await page.evaluate(() => app.p.state), 'active'); assert.equal(await page.evaluate(() => requests.length), beforeAuto + 1);
+        await page.keyboard.press('Control+Alt+a'); assert.equal(await page.evaluate(() => app.p.state), 'paused'); await page.evaluate(() => app.q.stop());
+    });
+    await check('0.1.4: natychmiastowy zapis, Anuluj, Wyczyść i ponowne logowanie z Ctrl', async () => {
+        await resetCase(page); await setBind(page, 'Control+k'); await setBind(page, 'Control+Shift+b', 'autoKey');
+        await page.evaluate(() => { app.openConfig(); app.fields.interval.val(89); app.saveConfig(); });
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyK');
+        await page.evaluate(() => app.openCapture('manualKey')); await page.keyboard.press('Control+b');
+        await page.locator('.tp-bind .tp-button').filter({ hasText: 'Anuluj' }).click();
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyK');
+        await page.evaluate(() => app.openCapture('manualKey')); await page.locator('.tp-bind .tp-button').filter({ hasText: 'Wyczyść' }).click();
+        assert.equal(await page.evaluate(() => app.p.config.manualKey.code), 'KeyK');
+        await page.locator('.tp-bind .tp-button').filter({ hasText: 'Anuluj' }).click();
+        const expected = await page.evaluate(() => structuredClone(app.p));
+        await page.evaluate(() => { app.destroy(); app = new TeleportQueue.App(env).init(); app.panel.show(); app.panel.setWndOnPeak(); });
+        assert.deepEqual(await page.evaluate(() => app.p), expected);
+        const n = await page.evaluate(() => requests.length); await page.locator('.tp-slot').first().click(); await page.keyboard.press('Control+k');
+        assert.equal(await page.evaluate(() => requests.length), n + 1);
+        await page.keyboard.press('Control+Shift+b'); assert.equal(await page.evaluate(() => app.p.state), 'active');
+        assert.equal(await page.evaluate(() => requests.length), n + 2); await page.evaluate(() => app.q.stop());
+        await page.evaluate(() => app.openCapture('manualKey')); await page.locator('.tp-bind .tp-button').filter({ hasText: 'Wyczyść' }).click();
+        await page.locator('.tp-bind .tp-button').filter({ hasText: 'Zapisz' }).click(); assert.equal(await page.evaluate(() => app.p.config.manualKey), null);
+        await page.evaluate(() => app.destroy());
+    });
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true, ...(process.env.TP_BROWSER_CHANNEL ? { channel: process.env.TP_BROWSER_CHANNEL } : {}) });
     try {
@@ -439,7 +573,7 @@ async function regressions(page, check) {
         if (process.env.TP_PROBE) {
             await initNativeKeys(page);
             const failures = [];
-            await regressions(page, async (name, fn) => {
+            await (process.env.TP_PROBE === 'ctrl' ? ctrlRegressions : regressions)(page, async (name, fn) => {
                 try { await fn(); console.log('PASS ' + name); } catch (error) { failures.push(name); console.log('FAIL ' + name + ': ' + error.message); }
             });
             if (failures.length) throw new Error('Regression probes failed: ' + failures.length);
@@ -600,12 +734,12 @@ async function regressions(page, check) {
         await check('skrót: repeat, input, jeden fizyczny klawisz oraz blokada przy pauzie', async () => {
             const result = await page.evaluate(async () => {
                 responseType = 'rejected'; const before = requests.length;
-                const down = () => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', bubbles: true }));
-                const up = () => document.dispatchEvent(new KeyboardEvent('keyup', { code: 'F9', bubbles: true }));
-                down(); down(); document.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', repeat: true, bubbles: true }));
+                const down = () => document.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, code: 'F9', bubbles: true }));
+                const up = () => document.dispatchEvent(new KeyboardEvent('keyup', { cancelable: true, code: 'F9', bubbles: true }));
+                down(); down(); document.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, code: 'F9', repeat: true, bubbles: true }));
                 await Promise.resolve(); up();
                 const input = document.createElement('input'); document.body.append(input);
-                input.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', bubbles: true })); up(); input.remove();
+                input.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, code: 'F9', bubbles: true })); up(); input.remove();
                 app.p.state = 'paused'; down(); up(); app.p.state = 'off';
                 return requests.length - before;
             });
@@ -1074,6 +1208,7 @@ async function regressions(page, check) {
             await page.evaluate(() => { app.destroy(); });
         });
         await regressions(page, check);
+        await ctrlRegressions(page, check);
         assert.deepEqual(errors, []);
         console.log(`Browser: ${checks.length} checks passed; native Window, ItemsManager, PointerDragDrop and API; controlled game/server fixture.`);
     } finally { await browser.close(); }
