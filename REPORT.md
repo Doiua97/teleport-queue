@@ -98,7 +98,9 @@ node tests/browser.cjs
 
 Playwright musi być dostępny dla Node, np. przez NODE_PATH. `TP_PROBE=stable` wykonuje 11 nowych scenariuszy, a `TP_CORE_FILE` wskazuje lokalną kopię core 0.1.5 do porównania. Pozostałe tryby audit/ctrl/metrics są zachowane. Do sprawdzenia podstawowego kodu produkcyjnego używany jest także nieinstrumentowany bieżący core.
 
-Publikacja: najpierw commit core/testów/dokumentacji, następnie loader 0.1.6 przypięty do rzeczywistego SHA zasobów. Trzy adresy mają ten sam SHA i ?v=0.1.6; updateURL/downloadURL nadal wskazują main. Publiczne pliki będą porównane z bajtami Git i sprawdzone pod kątem HTTP 200. SHA zasobów i link zostaną uzupełnione po wysłaniu.
+Commit core, testów i dokumentacji: [`20bb18971e3b7d2eb3a9b5d166c279ff83a524b1`](https://github.com/Doiua97/teleport-queue/commit/20bb18971e3b7d2eb3a9b5d166c279ff83a524b1). Loader 0.1.6 w następnym commicie przypina wszystkie trzy zasoby do tego SHA z ?v=0.1.6. UpdateURL/downloadURL nadal wskazują main. [Instalacja lub aktualizacja przez Tampermonkey](https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js).
+
+Publiczne adresy zasobów zwróciły HTTP 200 i zgadzają się bajtowo z Git. SHA-256: core `139021571a4ad29c86b97a4460a1ff13875ecf38dd521020d83ac0bacc36768d`, CSS `66bcad587b16e3fad0dfa98c239f068323cefc769857e3cac5e7bdc4ce5bb4aa`, ikona `f5101c5a6e8800704300a11aa4f77117bcd5a78de89bd631bec2a32c734c7bba`. Końcowy SHA loadera i wynik jego sprawdzenia na main są podawane w odpowiedzi po publikacji.
 
 ## Krótka próba w Margonem
 

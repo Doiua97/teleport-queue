@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Margonem NI — Teleporty
 // @namespace    https://github.com/Doiua97/teleport-queue
-// @version      0.1.5
+// @version      0.1.6
 // @description  60 skrótów do teleportów, kolejka ręczna i tryb czasowy.
 // @author       Doiua
 // @match        https://*.margonem.pl/*
@@ -9,9 +9,9 @@
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js
 // @downloadURL  https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js
-// @require      https://raw.githubusercontent.com/Doiua97/teleport-queue/c90b1d325068c45e9872ff13223f306cd6f052a4/teleporty.core.js?v=0.1.5
-// @resource     tp_css https://raw.githubusercontent.com/Doiua97/teleport-queue/c90b1d325068c45e9872ff13223f306cd6f052a4/teleporty.css?v=0.1.5
-// @resource     tp_icon https://raw.githubusercontent.com/Doiua97/teleport-queue/c90b1d325068c45e9872ff13223f306cd6f052a4/assets/widget.png?v=0.1.5
+// @require      https://raw.githubusercontent.com/Doiua97/teleport-queue/20bb18971e3b7d2eb3a9b5d166c279ff83a524b1/teleporty.core.js?v=0.1.6
+// @resource     tp_css https://raw.githubusercontent.com/Doiua97/teleport-queue/20bb18971e3b7d2eb3a9b5d166c279ff83a524b1/teleporty.css?v=0.1.6
+// @resource     tp_icon https://raw.githubusercontent.com/Doiua97/teleport-queue/20bb18971e3b7d2eb3a9b5d166c279ff83a524b1/assets/widget.png?v=0.1.6
 // @grant        unsafeWindow
 // @grant        GM_getResourceText
 // @grant        GM_getResourceURL
