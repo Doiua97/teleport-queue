@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
+const coreSource = require('./core-source.cjs');
 const sourceDir = process.env.MARGO_SOURCE_DIR || 'E:/Kod margonem';
 const source = fs.readFileSync(path.join(sourceDir, 'main.min.DdoKxU4n.js'), 'utf8');
 function moduleCode(name) {
@@ -13,6 +14,9 @@ function moduleCode(name) {
 const equipment = moduleCode('HeroEquipment');
 const useMethod = equipment.slice(equipment.indexOf('this.sendUseRequest = function'),
     equipment.indexOf('this.callCheckCanFinishExternalTutorial ='));
+const itemSource = moduleCode('Item');
+const itemEvents = itemSource.slice(itemSource.indexOf('this.on = function'), itemSource.indexOf('this.beforeDelete = function'));
+const viewUpdate = itemSource.slice(itemSource.indexOf('this.updadeViewAfterUpdateItem ='), itemSource.indexOf('this.getUnbindCost ='));
 const templates = Object.fromEntries(['border-window', 'button', 'widget-button', 'item', 'input', 'ni-input-text',
     'checkbox-custom', 'c-color-picker', 'scrollbar-wrapper', 'crafting'].map(name => {
     const code = moduleCode('TemplatesData');
@@ -398,6 +402,239 @@ async function ctrlRegressions(page, check) {
     });
 }
 
+async function auditMetrics(page) {
+    return page.evaluate(() => {
+        window.app?.destroy();
+        Engine.hero.d.id++;
+        window.app = new TeleportQueue.App(env).init();
+        app.panel.show();
+        for (let i = 0; i < 60; i++) app.assign(i, makeItem(3000 + i));
+        app.overlays();
+        const counts = {};
+        const undo = [];
+        const count = (obj, name) => {
+            const original = obj[name];
+            obj[name] = function (...args) {
+                counts[name] = (counts[name] || 0) + 1;
+                return original.apply(this, args);
+            };
+            undo.push(() => { obj[name] = original; });
+        };
+        for (const name of ['syncIcon', 'renderSlot', 'updateNext']) count(app, name);
+        for (const name of ['createViewIcon', 'deleteViewIconIfExist']) count(Engine.items, name);
+        const text = $.fn.text;
+        $.fn.text = function (...args) {
+            if (args.length && this.hasClass('tp-cooldown')) counts.cooldownWrites = (counts.cooldownWrites || 0) + 1;
+            return text.apply(this, args);
+        };
+        const measure = fn => {
+            for (const key of Object.keys(counts)) delete counts[key];
+            fn();
+            return { syncIcon: 0, renderSlot: 0, updateNext: 0, createViewIcon: 0, deleteViewIconIfExist: 0, cooldownWrites: 0, ...counts };
+        };
+        try {
+            return {
+                tenOverlays: measure(() => { for (let i = 0; i < 10; i++) app.overlays(); }),
+                render: measure(() => app.render()),
+                sync: measure(() => app.sync()),
+                changedSlot: measure(() => app.changedSlots(0))
+            };
+        } finally {
+            $.fn.text = text;
+            for (const off of undo) off();
+            app.destroy();
+        }
+    });
+}
+
+async function auditRegressions(page, check) {
+    await check('0.1.5: niezmienione ikony nie są synchronizowane z zegara; jeden wybór na render', async () => {
+        const metrics = await auditMetrics(page);
+        assert.equal(metrics.tenOverlays.syncIcon, 0);
+        assert.equal(metrics.tenOverlays.cooldownWrites, 0);
+        assert.equal(metrics.tenOverlays.createViewIcon, 0);
+        assert.equal(metrics.render.updateNext, 1);
+        assert.equal(metrics.sync.syncIcon, 60);
+        assert.equal(metrics.changedSlot.syncIcon, 1);
+    });
+    await check('0.1.5: natywne metadane, ilość grupy, tooltip i cooldown bez odtwarzania ikony', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            const originalNow = Date.now;
+            const base = Math.floor(originalNow() / 1000);
+            let now = base;
+            Date.now = () => now * 1000;
+            try {
+                const a = makeItem(4100, `teleport=1,2,3,Audyt;amount=3;timelimit=180,${base + 2}`);
+                const b = makeItem(4101, `teleport=1,2,3,Audyt;amount=7;timelimit=180,${base + 5}`);
+                a.$.addClass('t-leg very-low-value').find('.amount').addClass('low-value');
+                a.setTip = icon => icon.attr('data-audit-tip', 'Ilość ' + a.parseStats().amount);
+                installNativeViewUpdate(a);
+                app.p.slots[0] = { items: [{ id: a.id, hid: a.hid }, { id: b.id, hid: b.hid }] };
+                app.changedSlots(0);
+                app.sync();
+                const icon = app.views.get(0).icon;
+                const initial = app.cells[0].find('.tp-cooldown').text() === '2s'
+                    && icon.find('.amount').text() === '10' && icon.hasClass('t-leg')
+                    && icon.hasClass('very-low-value') && icon.find('.amount').hasClass('low-value');
+                now += 2;
+                app.overlays();
+                const ready = app.cells[0].find('.tp-cooldown').text() === ''
+                    && !app.cells[0].hasClass('tp-unavailable') && app.cells[0].hasClass('tp-next');
+                app.panel.hide();
+                a.stat = 'teleport=1,2,3,Audyt;amount=2;enhancement_upgrade_lvl=4';
+                a.trigger('afterUpdate');
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const update = app.views.get(0).icon[0] === icon[0] && icon.find('.amount').text() === '9'
+                    && icon.attr('data-audit-tip') === 'Ilość 2' && icon.attr('data-audit-enhancement') === '4'
+                    && icon.hasClass('t-leg') && icon.find('.amount').hasClass('low-value');
+                app.panel.show();
+                icon.trigger('mouseenter');
+                a.stat = 'teleport=1,2,3,Audyt;amount=2;enhancement_upgrade_lvl=4;timelimit=180,' + (base + 10);
+                a.trigger('afterUpdate');
+                await new Promise(resolve => setTimeout(resolve, 10));
+                now = base + 5;
+                app.overlays();
+                const switched = app.views.get(0).item === b && !icon[0].isConnected
+                    && !Engine.items.getViews()[a.id]?.TP_QUEUE_VIEW
+                    && Engine.items.getViews()[b.id].TP_QUEUE_VIEW.length === 1
+                    && app.cells[0].find('.amount').text() === '9' && app.p.next === 1;
+                return { initial, ready, update, switched };
+            } finally { Date.now = originalNow; }
+        });
+        assert.deepEqual(result, { initial: true, ready: true, update: true, switched: true });
+    });
+    await check('0.1.5: jeden sync po serii natywnych Item events, wymiana obiektu i brak wycieków widoków', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            const old = hItems['2001'];
+            const sync = app.sync;
+            let calls = 0;
+            app.sync = function () { calls++; return sync.call(this); };
+            for (let i = 0; i < 10; i++) old.trigger('afterUpdate');
+            await new Promise(resolve => setTimeout(resolve, 10));
+            const coalesced = calls === 1;
+            for (let i = 0; i < 10; i++) app.sync();
+            const singleCallbacks = old.events.afterUpdate.length === 1 && old.events.delete.length === 1;
+            old.trigger('delete');
+            delete hItems[old.id];
+            Engine.items.deleteViewWithAllIcon(old.id);
+            const replacement = makeItem(old.id);
+            await new Promise(resolve => setTimeout(resolve, 10));
+            const replaced = app.views.get(0).item === replacement && old.events.afterUpdate.length === 0
+                && old.events.delete.length === 0 && replacement.events.afterUpdate.length === 1;
+            for (let i = 0; i < 20; i++) app.swap(0, 1);
+            const expected = app.views.size;
+            const count = Object.values(Engine.items.getViews()).reduce((sum, views) => sum + (views.TP_QUEUE_VIEW?.length || 0), 0);
+            const subscribers = [...app.items.keys()];
+            app.destroy();
+            const clean = subscribers.every(item => !item.events.afterUpdate?.length && !item.events.delete?.length)
+                && Object.values(Engine.items.getViews()).every(views => !views.TP_QUEUE_VIEW)
+                && !Engine.items.test().callbacks.g?.TP_QUEUE_FETCH;
+            return { coalesced, singleCallbacks, replaced, views: count === expected, clean };
+        });
+        assert.deepEqual(result, { coalesced: true, singleCallbacks: true, replaced: true, views: true, clean: true });
+    });
+    await check('0.1.5: checkTeleport pozostaje natywne, a sukces nadal wymaga właściwego ITEM_USED', async () => {
+        const result = await page.evaluate(async () => {
+            window.app?.destroy();
+            const original = Engine.interface.checkTeleport;
+            Engine.hero.d.id++;
+            app = new TeleportQueue.App(env).init();
+            app.assign(0, hItems['2001']);
+            const unchanged = Engine.interface.checkTeleport === original;
+            responseType = 'uncertain';
+            await app.q.manual();
+            const accepted = app.p.next === 2 && app.p.last === 1;
+            app.q.stop();
+            responseType = 'rejected';
+            await app.q.manual();
+            const rejected = app.p.next === 1;
+            app.destroy();
+            return { unchanged, accepted, rejected, restored: Engine.interface.checkTeleport === original };
+        });
+        assert.deepEqual(result, { unchanged: true, accepted: true, rejected: true, restored: true });
+    });
+    await check('0.1.5: destroy czyści listenery, API i wszystkie cztery rodzaje timerów', async () => {
+        const result = await page.evaluate(async () => {
+            window.app?.destroy();
+            const timeouts = new Map(), intervals = new Map(), seen = new Set(), listeners = new Set(), callbacks = new Set();
+            const original = { setTimeout, clearTimeout, setInterval, clearInterval,
+                listen: TeleportQueue.App.prototype.listen, add: API.addCallbackToEvent, remove: API.removeCallbackFromEvent,
+                docRemove: document.removeEventListener, winRemove: window.removeEventListener };
+            window.setTimeout = (fn, delay, ...args) => {
+                let id;
+                id = original.setTimeout.call(window, () => { timeouts.delete(id); fn(...args); }, delay);
+                timeouts.set(id, delay); seen.add(delay);
+                return id;
+            };
+            window.clearTimeout = id => { timeouts.delete(id); original.clearTimeout.call(window, id); };
+            window.setInterval = (fn, delay, ...args) => {
+                const id = original.setInterval.call(window, fn, delay, ...args);
+                intervals.set(id, delay); seen.add(delay);
+                return id;
+            };
+            window.clearInterval = id => { intervals.delete(id); original.clearInterval.call(window, id); };
+            TeleportQueue.App.prototype.listen = function (target, name, fn, options) {
+                listeners.add(fn);
+                return original.listen.call(this, target, name, fn, options);
+            };
+            document.removeEventListener = function (name, fn, options) { listeners.delete(fn); return original.docRemove.call(this, name, fn, options); };
+            window.removeEventListener = function (name, fn, options) { listeners.delete(fn); return original.winRemove.call(this, name, fn, options); };
+            API.addCallbackToEvent = function (name, fn) { callbacks.add(fn); return original.add.call(this, name, fn); };
+            API.removeCallbackFromEvent = function (name, fn) { callbacks.delete(fn); return original.remove.call(this, name, fn); };
+            try {
+                Engine.hero.d.id++;
+                app = new TeleportQueue.App(env);
+                app.init();
+                app.assign(0, hItems['2001']);
+                app.p.config.auto = true;
+                responseType = 'success';
+                await app.q.toggle();
+                const scheduled = [...timeouts.values()].includes(120000);
+                app.q.stop();
+                const removed = ![...timeouts.values()].includes(120000);
+                responseType = 'delayed';
+                const pending = app.q.manual();
+                app.deferSync();
+                const registered = listeners.size === 10 && callbacks.size === 5 && [...timeouts.values()].includes(15000);
+                app.destroy();
+                await pending;
+                const clean = listeners.size === 0 && callbacks.size === 0 && intervals.size === 0
+                    && ![...timeouts.values()].some(delay => [0, 15000, 120000].includes(delay));
+                const saved = JSON.stringify(values.get(app.key));
+                reply();
+                await Promise.resolve();
+                return { scheduled, removed, registered, clean, allTimersSeen: [0, 1000, 15000, 120000].every(delay => seen.has(delay)),
+                    lateReply: saved === JSON.stringify(values.get(app.key)) };
+            } finally {
+                app.destroy();
+                window.setTimeout = original.setTimeout; window.clearTimeout = original.clearTimeout;
+                window.setInterval = original.setInterval; window.clearInterval = original.clearInterval;
+                document.removeEventListener = original.docRemove; window.removeEventListener = original.winRemove;
+                TeleportQueue.App.prototype.listen = original.listen;
+                API.addCallbackToEvent = original.add; API.removeCallbackFromEvent = original.remove;
+            }
+        });
+        assert.deepEqual(result, { scheduled: true, removed: true, registered: true, clean: true, allTimersSeen: true, lateReply: true });
+    });
+    await check('0.1.5: nieinstrumentowany produkcyjny core uruchamia loader i publikuje tylko boot', async () => {
+        await page.evaluate(() => window.app?.destroy());
+        await page.addScriptTag({ path: path.resolve(__dirname, '../teleporty.core.js') });
+        const result = await page.evaluate(() => {
+            const keys = Object.keys(TeleportQueue);
+            const handle = TeleportQueue.boot({ ...env, css() {} });
+            const created = document.querySelectorAll('.tp-slot').length === 60;
+            const duplicate = TeleportQueue.boot({ ...env, css() {} }) === handle;
+            const handleKeys = Object.keys(handle);
+            handle.destroy();
+            return { keys, handleKeys, created, duplicate, clean: !document.querySelector('.tp-window') && !window.__doiuaTeleportQueueV1 };
+        });
+        assert.deepEqual(result, { keys: ['boot'], handleKeys: ['destroy'], created: true, duplicate: true, clean: true });
+    });
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true, ...(process.env.TP_BROWSER_CHANNEL ? { channel: process.env.TP_BROWSER_CHANNEL } : {}) });
     try {
@@ -518,6 +755,21 @@ async function ctrlRegressions(page, check) {
             if (name === 'Api') await page.evaluate(() => { Engine.apiData = ApiData_default; });
             await page.addScriptTag({ content: moduleCode(name) });
         }
+        await page.addScriptTag({ content: `
+            window.installItemEvents = function (item) {
+                item.events = {};
+                (function () { ${itemEvents} }).call(item);
+            };
+            window.installNativeViewUpdate = function (item) {
+                const self = item;
+                const issetAmountStat = () => Object.hasOwn(item.parseStats(), 'amount');
+                const getAmountStat = () => Number(item.parseStats().amount);
+                const roundShorten = String;
+                const getEnhancement_upgrade_lvlStat = () => item.parseStats().enhancement_upgrade_lvl;
+                const setEnhancementUpgradeDataAttr = (value, icon) => icon.attr('data-audit-enhancement', value ?? '');
+                (function () { ${viewUpdate} }).call(item);
+            };
+        ` });
         await page.evaluate(() => {
             Engine.windowsData = o$4;
             Engine.windowManager = new WindowManager(); Engine.windowManager.init();
@@ -528,18 +780,15 @@ async function ctrlRegressions(page, check) {
             const nativeDrop = $.fn.pointerDroppable;
             $.fn.pointerDroppable = function (options) { this.each((i, el) => dropOptions.set(el, options)); return nativeDrop.call(this, options); };
             window.makeItem = (id, stat = 'teleport=1,10,10;amount=3') => {
-                const events = {};
                 const item = { id: String(id), hid: 'h' + id, cl: 32, tpl: 'tpl-' + id, loc: 'g', st: 20, stat,
                     $: Templates_default.get('item'), parseStats() { return Object.fromEntries(this.stat.split(';').map(s => { const [k, v] = s.split('='); return [k, v ?? null]; })); },
-                    on: (name, fn) => (events[name] ??= []).push(fn),
-                    unregisterCallback: (name, fn) => { events[name] = (events[name] || []).filter(f => f !== fn); },
-                    trigger(name) { for (const fn of [...events[name] || []]) fn(); },
                     checkExpires: () => false, issetTimelimitStat: () => false, issetExpiresStat: () => false,
                     getAnimationStat: () => false,
                     drawNotice() {}, updadeViewAfterUpdateItem(icon) { icon.find('.amount').remove(); icon.append($('<div>').addClass('amount').text(this.parseStats().amount)); },
                     setTip: icon => icon.tip('Teleport'),
                     updateDynamicTips() {}
                 };
+                installItemEvents(item);
                 item.$.data('item', item);
                 item.$canvasIcon = item.$.find('.canvas-icon');
                 const ctx = item.$canvasIcon[0].getContext('2d'); ctx.fillStyle = '#d43767'; ctx.fillRect(5, 5, 22, 22);
@@ -567,13 +816,21 @@ async function ctrlRegressions(page, check) {
         })();` });
         await page.addStyleTag({ content: fs.readFileSync(path.join(sourceDir, 'style.KGLtTzyt.css'), 'utf8') });
         await page.addStyleTag({ path: process.env.TP_CSS_FILE || path.resolve(__dirname, '../teleporty.css') });
-        await page.addScriptTag({ path: process.env.TP_CORE_FILE || path.resolve(__dirname, '../teleporty.core.js') });
+        await page.addScriptTag({ content: coreSource(process.env.TP_CORE_FILE) });
         const checks = [];
         async function check(name, fn) { await fn(); checks.push(name); console.log('PASS ' + name); }
+        if (process.env.TP_PROBE === 'metrics') {
+            const metrics = await auditMetrics(page);
+            console.log(JSON.stringify(metrics, null, 2));
+            if (process.env.TP_METRICS_FILE) fs.writeFileSync(process.env.TP_METRICS_FILE, JSON.stringify(metrics, null, 2) + '\n');
+            assert.deepEqual(errors, []);
+            return;
+        }
         if (process.env.TP_PROBE) {
             await initNativeKeys(page);
             const failures = [];
-            await (process.env.TP_PROBE === 'ctrl' ? ctrlRegressions : regressions)(page, async (name, fn) => {
+            const run = process.env.TP_PROBE === 'audit' ? auditRegressions : process.env.TP_PROBE === 'ctrl' ? ctrlRegressions : regressions;
+            await run(page, async (name, fn) => {
                 try { await fn(); console.log('PASS ' + name); } catch (error) { failures.push(name); console.log('FAIL ' + name + ': ' + error.message); }
             });
             if (failures.length) throw new Error('Regression probes failed: ' + failures.length);
@@ -1209,6 +1466,7 @@ async function ctrlRegressions(page, check) {
         });
         await regressions(page, check);
         await ctrlRegressions(page, check);
+        await auditRegressions(page, check);
         assert.deepEqual(errors, []);
         console.log(`Browser: ${checks.length} checks passed; native Window, ItemsManager, PointerDragDrop and API; controlled game/server fixture.`);
     } finally { await browser.close(); }

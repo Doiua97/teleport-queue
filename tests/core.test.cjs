@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-require('../teleporty.core.js');
+vm.runInThisContext(require('./core-source.cjs')(), { filename: 'teleporty.core.test.js' });
 const T = globalThis.TeleportQueue;
 
 const item = (id, stat = 'teleport=1,2,3', extra = {}) => ({ id: String(id), hid: `h${id}`, cl: 32,
@@ -187,11 +187,16 @@ test('loader przekazuje unsafeWindow i zasoby z odrębnego sandboxu bez globalne
     assert.equal(received.win, gameWindow); assert.equal(received.icon, 'resource:tp_icon');
     received.css(); assert.equal(styled, '.tp-window{}'); received.set('x', 3); assert.equal(received.get('x'), 3);
     assert.equal(Object.hasOwn(sandbox, 'Engine'), false);
+    assert.deepEqual(Object.keys(gameWindow), ['Engine'], 'loader nie publikuje usług GM w oknie gry');
 });
 test('metadane, adresy i wersje zasobów są gotowe do instalacji', () => {
     const text = fs.readFileSync(require.resolve('../teleporty.user.js'), 'utf8');
-    assert(text.includes('@version      0.1.4')); assert(text.includes('@author       Doiua'));
-    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=0.1.4`));
+    const version = text.match(/^\/\/ @version\s+(\d+\.\d+\.\d+)\s*$/m)?.[1];
+    assert(version); assert(text.includes('@author       Doiua'));
+    for (const name of ['teleporty.core.js', 'teleporty.css', 'assets/widget.png']) assert(text.includes(`${name}?v=${version}`));
+    const resources = [...text.matchAll(/^\/\/\s+@(?:require|resource)\s+(?:\S+\s+)?https:\/\/raw\.githubusercontent\.com\/Doiua97\/teleport-queue\/([a-f0-9]{40})\//gm)];
+    assert.equal(resources.length, 3);
+    assert.equal(new Set(resources.map(match => match[1])).size, 1, 'wszystkie zasoby wskazują ten sam commit');
     assert(!text.includes('OWNER')); assert(!text.includes('REPO'));
     assert.equal((text.match(/@match /g) || []).length, 2);
 });
@@ -358,4 +363,27 @@ test('0.1.4: nieanulowalny event nie uruchamia konkurencyjnej akcji', () => {
     const ctrlb = key('KeyB', { ctrl: true });
     assert.equal(T.App.prototype.conflict.call(app, 'manualKey', ctrlb, { cancelable: false }), 'Ten skrót jest już zajęty.');
     assert.equal(T.App.prototype.conflict.call(app, 'manualKey', ctrlb, { cancelable: true }), '');
+});
+
+test('0.1.5: produkcyjny core udostępnia wyłącznie boot bez dostępu do pamięci GM', () => {
+    const sandbox = {};
+    vm.runInNewContext(fs.readFileSync(require.resolve('../teleporty.core.js'), 'utf8'), sandbox);
+    assert.deepEqual(Object.keys(sandbox), ['TeleportQueue']);
+    assert.deepEqual(Object.keys(sandbox.TeleportQueue), ['boot']);
+    assert.equal(typeof sandbox.TeleportQueue.boot, 'function');
+    assert(Object.isFrozen(sandbox.TeleportQueue));
+});
+
+test('0.1.5: pole last zachowuje dane v2 i nadal zapisuje potwierdzony sukces', async () => {
+    const f = fixture();
+    f.p.last = 47;
+    assert.equal(T.load(f.p).last, 47);
+    f.put(2);
+    f.result('rejected');
+    await f.q.manual(2);
+    assert.equal(f.p.last, 47);
+    f.result('success');
+    await f.q.manual(2);
+    assert.equal(f.p.last, 2);
+    assert.equal(T.load(f.p).last, 2);
 });

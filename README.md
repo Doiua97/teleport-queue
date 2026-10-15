@@ -1,12 +1,12 @@
 # Teleporty do Margonem NI
 
-Dodatek autorstwa **Doiua**, wersja **0.1.4**. Panel ma 60 miejsc na teleporty z torby, kolejkę ręczną oraz automat uruchamiany przez gracza.
+Dodatek autorstwa **Doiua**, wersja **0.1.5**. Panel ma 60 miejsc na teleporty z torby, kolejkę ręczną oraz automat uruchamiany przez gracza.
 
-Wersja 0.1.4 poprawia dostępne skróty Ctrl+litera i Ctrl+Shift+litera, w tym Ctrl+K. Rozróżnia AltGr używany do pisania od zwykłego Ctrl+Alt. Pozostałe funkcje i dane wersji 0.1.3 są zachowane.
+Wersja 0.1.5 ogranicza niepotrzebne odświeżanie ikon i usuwa pozostałości integracji. Zachowuje wygląd, ustawienia i sposób używania teleportów, w tym skróty Ctrl oraz ochronę AltGr z 0.1.4. Pełny przegląd kodu i uzasadnienia zmian opisuje [AUDIT.md](AUDIT.md).
 
 [Plik do instalacji w Tampermonkey](https://raw.githubusercontent.com/Doiua97/teleport-queue/main/teleporty.user.js)
 
-Wykonano testy lokalne: **50 testów logiki i 54 scenariusze przeglądarkowe**, w tym zapis i użycie 45 dostępnych kombinacji Ctrl/Ctrl+Shift oraz oryginalny parser klawiatury gry. Nie instalowano dodatku na prawdziwej postaci. Testy z kontrolowanymi odpowiedziami nie potwierdzają działania na serwerze; zakres i pozostałe sprawdzenia opisuje [raport](REPORT.md).
+Wykonano testy lokalne: **52 testy logiki i 60 scenariuszy przeglądarkowych**, w tym zapis i użycie 45 dostępnych kombinacji Ctrl/Ctrl+Shift, oryginalny parser klawiatury gry i metody zdarzeń przedmiotów. Nie instalowano dodatku na prawdziwej postaci. Testy z kontrolowanymi odpowiedziami nie potwierdzają działania na serwerze; zakres, pomiary i pozostałe sprawdzenia opisuje [raport](REPORT.md).
 
 ## Używanie
 
@@ -45,19 +45,21 @@ Zaakceptowane użycie przesuwa kolejkę. Normalne ładowanie mapy zachowuje akty
 
 KC bez miejsca otwiera wybór w grze i zachowuje slot. Automat pauzuje; wybierz miejsce i wznów go, gdy będziesz gotowy. Przy odrzuceniu albo braku potwierdzenia wskaźnik pozostaje. Brak odpowiedzi utrzymuje blokadę kolejnego żądania do późnej odpowiedzi lub odświeżenia.
 
-**Aktualizacja 0.1.3 → 0.1.4 zachowuje dane v2.** Nie resetuje slotów, grup, kłódek, skrótów ani wyglądu. Dane 0.1.1 nadal nie są przenoszone, ale pozostają zachowane. Położenie widgetu nadal zapisuje gra.
+**Aktualizacja 0.1.2–0.1.4 → 0.1.5 zachowuje dane v2.** Nie resetuje slotów, grup, kłódek, skrótów ani wyglądu. Dane 0.1.1 nadal nie są przenoszone, ale pozostają zachowane. Położenie widgetu nadal zapisuje gra.
 
 ## Pliki i testy
 
 | Plik | Przeznaczenie |
 | --- | --- |
-| `teleporty.user.js` | Loader i dostęp do pamięci Tampermonkey; wersjonowane zasoby 0.1.4. |
+| `teleporty.user.js` | Loader i dostęp do pamięci Tampermonkey; wersjonowane zasoby 0.1.5. |
 | `teleporty.core.js` | Okna, widget, grupy, blokady, import, kolejka i skróty. |
 | `teleporty.css` | Wygląd ograniczony do elementów dodatku. |
 | `assets/widget.png` | Ikona 32 × 32 px z przezroczystością, zachowana bez zmian. |
 | `tests/core.test.cjs` | Testy logiki, profili, grup i konfliktów. |
 | `tests/browser.cjs` | Przeglądarka, oryginalne moduły klienta i kontrolowane odpowiedzi. |
-| `REPORT.md` | Przyczyny napraw, model danych, komunikaty i weryfikacja. |
+| `tests/core-source.cjs` | Dostęp do wnętrza modułu wyłącznie podczas testów; instalowany core udostępnia tylko start. |
+| `REPORT.md` | Wyniki refaktoryzacji, pomiary, zgodność danych, skróty i publikacja. |
+| `AUDIT.md` | Przegląd całego kodu, zachowane zabezpieczenia i porównanie modeli loadera. |
 
 Projekt nie wymaga bundlera ani bibliotek produkcyjnych.
 

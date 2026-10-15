@@ -413,11 +413,6 @@
             // API has no removable batch-update callback; fetch and Item events are removable.
             this.e.items.fetch({ loc: 'g', k: 'TP_QUEUE_FETCH' }, () => this.deferSync());
             this.clean.push(() => this.e.items.removeCallback({ loc: 'g', k: 'TP_QUEUE_FETCH' }));
-            wrap(this.e.interface, 'checkTeleport', (original, receiver, args) => {
-                const op = this.operation;
-                if (op?.response && args[0]?.t === 'reload') op.reload = true;
-                return original.apply(receiver, args);
-            }, this.clean);
             for (const name of ['onClear', 'startGameThread']) if (typeof this.e[name] === 'function') {
                 wrap(this.e, name, (original, receiver, args) => {
                     if (name === 'onClear') this.q.wait();
@@ -436,7 +431,7 @@
         }
         use(item) {
             let finish;
-            const op = { item: identity(item), response: false, reload: false, accepted: false,
+            const op = { item: identity(item), response: false, accepted: false,
                 choice: needsTarget(item), done: false, result: new Promise(resolve => { finish = resolve; }) };
             op.finish = result => {
                 if (op.done) return;
@@ -462,7 +457,7 @@
                         const choice = op.choice || (this.e.tpScroll?.itemId != null
                             && String(this.e.tpScroll.itemId) === op.item.id && this.e.tpScroll.wnd?.isShow());
                         op.finish(op.accepted ? (choice ? 'choice' : 'success') : 'rejected');
-                        if (op.done) this.q.release(op);
+                        this.q.release(op);
                     });
                 });
             } catch {
@@ -488,12 +483,11 @@
                 live.add(item);
                 if (this.items.has(item)) continue;
                 const update = () => this.deferSync();
-                const remove = () => this.deferSync();
                 item.on('afterUpdate', update);
-                item.on('delete', remove);
+                item.on('delete', update);
                 this.items.set(item, () => {
                     item.unregisterCallback('afterUpdate', update);
-                    item.unregisterCallback('delete', remove);
+                    item.unregisterCallback('delete', update);
                 });
             }
             for (const [item, off] of this.items) if (!live.has(item)) { off(); this.items.delete(item); }
@@ -504,7 +498,7 @@
                         this.p.slots[i] = refs.length ? { items: refs } : null; changed = true;
                     }
                 }
-                this.renderSlot(i);
+                this.renderSlot(i, true);
             });
             if (changed) this.save();
             this.render();
@@ -578,7 +572,7 @@
         }
         changedSlots(...indices) {
             for (const i of indices) this.clearSlot(i);
-            for (const i of indices) this.renderSlot(i, true);
+            for (const i of indices) this.renderSlot(i);
             this.save();
             this.render();
             this.updateScroll();
@@ -732,17 +726,16 @@
             if (old) { this.e.items.deleteViewIconIfExist(old.item.id, VIEW); this.views.delete(index); }
             this.cells[index].find('.tp-icon').remove();
         }
-        renderSlot(index, force = false) {
+        renderSlot(index, refresh = false) {
             const members = this.members(this.p.slots[index]);
             const item = members.find(item => this.available(item)) || members[0];
             const old = this.views.get(index);
-            if (!force && old?.item === item && old?.icon?.[0]?.isConnected) {
-                this.syncIcon(item, old.icon, members);
+            if (old?.item === item && old?.icon?.[0]?.isConnected) {
+                if (refresh) this.syncIcon(item, old.icon, members);
                 return;
             }
             this.clearSlot(index);
             const cell = this.cells[index];
-            cell.find('.tp-icon').remove();
             if (!item) return;
             const view = this.e.items.createViewIcon(item.id, VIEW);
             if (!view) return;
@@ -774,9 +767,16 @@
                 const view = this.views.get(i);
                 if (!view) continue;
                 const { item, icon } = view;
-                const left = cooldown(item);
-                this.cells[i].toggleClass('tp-unavailable', !this.available(item));
-                this.cells[i].find('.tp-cooldown').text(cooldownText(left));
+                const available = this.available(item);
+                const text = cooldownText(cooldown(item));
+                if (view.available !== available) {
+                    this.cells[i].toggleClass('tp-unavailable', !available);
+                    view.available = available;
+                }
+                if (view.cooldown !== text) {
+                    this.cells[i].find('.tp-cooldown').text(text);
+                    view.cooldown = text;
+                }
                 if (this.hover === i) item.setTip(icon);
             }
             this.updateNext();
@@ -795,7 +795,6 @@
             const p = this.p;
             this.status.text({ off: 'Tryb: Ręczny', active: 'Tryb: Auto — Aktywny', paused: 'Tryb: Auto — Pauza' }[p.state]);
             this.panel.$.toggleClass('tp-active', p.state === 'active').toggleClass('tp-paused', p.state === 'paused');
-            this.updateNext();
             this.pendingText.text(this.q.flight ? this.q.flight.done ?
                 'Brak odpowiedzi. Poczekaj lub odśwież grę przed kolejną próbą.' : 'Czekam na odpowiedź gry…' : '');
             this.manualButton.toggleClass('disable', p.state !== 'off' || Boolean(this.q.flight)).attr('aria-disabled', p.state !== 'off' || Boolean(this.q.flight));
@@ -809,7 +808,8 @@
                     .toggleClass('tp-locked', p.locked[i]);
             });
             for (const wnd of this.windows) for (const k of ['background', 'border', 'accent']) wnd.$[0].style.setProperty(`--tp-${k}`, p.config[k]);
-            this.overlays();
+            if (this.panel.isShow()) this.overlays();
+            else this.updateNext();
         }
         fillConfig(config) {
             const $ = this.$;
@@ -1175,6 +1175,5 @@
         restart();
         return handle;
     }
-    root.TeleportQueue = Object.freeze({ boot, Queue, App, load, defaults, cooldown, teleport, readyItem,
-        needsTarget, sameKey, keyOf, advance, profileKey, matches, ready, groupKey, groupOf, destination, gameConflict, nativeKey, cooldownText });
+    root.TeleportQueue = Object.freeze({ boot });
 })(globalThis);

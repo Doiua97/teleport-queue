@@ -1,98 +1,117 @@
-# Raport — Teleporty 0.1.4
+# Teleporty 0.1.5 — wynik audytu i refaktoryzacji
 
-Data: 15 października 2026. Autor: **Doiua**. Projekt: `E:\dodatki\margonem-teleporty`. Repozytorium: [Doiua97/teleport-queue](https://github.com/Doiua97/teleport-queue), gałąź `main`.
+Autor: **Doiua**. Repozytorium: **Doiua97/teleport-queue**, gałąź **main**. Punkt odniesienia: opublikowane 0.1.4, commit `346417edf70ab22f94724dd8a4ad9ff1e7b051ae`. Poprawki Ctrl były już wdrożone, dlatego audyt otrzymuje numer 0.1.5.
 
-## Zakres i przyczyna
+Pełny przegląd wszystkich funkcji, metod, stałych, stanu, adapterów, timerów, callbacków, DOM, mechanizmów klienta i loadera znajduje się w [AUDIT.md](AUDIT.md). Tabela rozróżnia kod konieczny, zbędny, powtarzający operacje, możliwy do uproszczenia i zachowany dla bezpieczeństwa/zgodności. Przy metodach podano wywołujących i zastosowanie wyników.
 
-Wersja 0.1.4 zmienia tylko system klawiatury 0.1.3, testy, dokumentację i wersjonowanie loadera. **Bez zmian pozostają** używanie teleportów, Queue, automat i jego czasowanie, okna, rozmiary, widget, przeciąganie, cooldowny, import, grupy i mechanizm Ctrl+LPM. Plik CSS i ikona nie zostały zmodyfikowane. Schemat nadal ma numer 2, klucz `margo-tp:v2:<world>:<characterId>`; nie ma resetu ani migracji.
+## Usunięte i uproszczone elementy
 
-Poprzednia lista systemKey mieszała skróty mające domyślną funkcję w przeglądarce ze skrótami przejmowanymi przez przeglądarkę **przed stroną**. Blokowało to m.in. Ctrl+D/F/G/K/L/P/R/S, mimo że zdarzenia tych kombinacji mogą zostać dostarczone stronie do obsługi. Zajęcie samego K przez Margonem także nie oznacza zajęcia Ctrl+K.
+| Element | Zmiana i uzasadnienie |
+|---|---|
+| `op.reload` | Usunięto inicjalizację i zapis. W całym projekcie brak odczytu. Sukces zależy od odpowiedzi i właściwego ITEM_USED. |
+| Wrapper `Engine.interface.checkTeleport` | Usunięto wraz z flagą. Natywna metoda nadal jest wywoływana przez HeroEquipment.sendUseRequest. |
+| Callback `remove` w App.sync | Był identyczny z update. Jeden callback deferSync przypina się i symetrycznie odpina od afterUpdate/delete. |
+| `if (op.done)` po op.finish | Warunek zawsze prawdziwy. Samo done, ochrona wewnątrz finish i późnej odpowiedzi pozostają. |
+| Drugie usunięcie .tp-icon w renderSlot | Wcześniejsze clearSlot usuwa DOM i natywną rejestrację. |
+| Parametr force w renderSlot | changedSlots już czyścił widok. Nowe znaczenie refresh pozwala aktualizować istniejący przedmiot po zdarzeniu bez wymiany węzła. |
+| App.overlays / syncIcon | Zegar sprawdza czas, gotowość i reprezentanta, aktualizując tylko zmieniony tekst/klasę. Pełne syncIcon wykonuje się przy tworzeniu lub synchronizacji przedmiotów. |
+| App.render / updateNext | Jeden wybór kolejki na render, również przy ukrytym panelu. Tick nadal reaguje na upływ cooldownu. |
+| TeleportQueue | Z 21 eksportów zostaje boot. Pozostałe funkcje są potrzebne wewnętrznie; tests/core-source.cjs udostępnia je tylko w źródle wykonywanym przez testy. W produkcyjnym core brak przełącznika testowego. |
 
-Sprawdzono źródło Chromium: BrowserView.PreHandleKeyboardEvent rozróżnia zarezerwowane polecenia i zwykłe skróty przekazywane rendererowi; BrowserCommandController.IsReservedCommandOrKey zachowuje pierwszeństwo m.in. nowej/zamykanej karty i okna oraz przywracania/przełączania kart. Nie użyto Keyboard Lock, pełnego ekranu, rozszerzenia ani przejmowania klawiszy systemowych. Źródła: [BrowserView](https://github.com/chromium/chromium/blob/main/chrome/browser/ui/views/frame/browser_view.cc), [BrowserCommandController](https://github.com/chromium/chromium/blob/main/chrome/browser/ui/browser_command_controller.cc).
+Nie usunięto całych nazwanych funkcji, ponieważ żadna nie okazała się martwa w produkcji. Usunięto martwy stan, zbędny callback adaptera, duplikat callbacka i nadmiarowe operacje. Ograniczenie eksportów nie oznacza usunięcia funkcjonalności.
 
-To analiza publicznego Chromium, nie dowód zachowania każdej wersji Edge/Firefox i ustawień systemowych. Automatyczne testy w Edge headless potwierdzają obsługę dostarczonych zdarzeń i natywny parser gry. Nie są testem wszystkich fizycznych akceleratorów przeglądarki z rzeczywistej klawiatury.
+## Zachowane elementy
 
-## Zmienione pliki
+**p.last** nie steruje funkcją produkcyjną. Jest jednak częścią danych v2: load odtwarza wartość, a potwierdzony sukces ją aktualizuje. Zachowano oba działania dla identycznego formatu i wartości profilu. Nowy test sprawdza odtworzenie starej wartości, brak zmiany po odmowie i aktualizację po sukcesie.
 
-| Plik | Zmiana |
-| --- | --- |
-| `teleporty.core.js` | Węższa blokada Ctrl, osobne AltGraph, wspólna walidacja i ochrona nieanulowalnego zdarzenia. |
-| `teleporty.user.js` | Wersja 0.1.4 i nowy commit zasobów; update/download nadal z main. |
-| `tests/core.test.cjs` | Macierz A–Z, AltGraph/identyfikacja, rejestr i cancelable. |
-| `tests/browser.cjs` | Pięć nowych scenariuszy Ctrl, 45 kombinacji, automat/przyciski, AltGr, zapis i powrót profilu; wcześniejsze syntetyczne zdarzenia poprawione na cancelable:true, jak zwykłe zdarzenia klawiatury. |
-| `README.md`, `REPORT.md` | Dostępność klawiszy, przyczyny, wyniki i ograniczenia. |
+Pozostawiono weryfikację postaci i id/hid przedmiotu, gotowości mapy, tutorialu/blessing, czynności, KC, sukcesu, pojedynczego żądania i późnych odpowiedzi. response, accepted, choice, done, epoch, flight i timeout 15 s mają rzeczywiste zastosowanie. Odpowiedź lub t=reload nie zastępuje właściwego ITEM_USED.
 
-## Które kombinacje Ctrl są dopuszczone
+Pozostają cztery rodzaje timerów: tick 1 s, harmonogram, operacja 15 s i łączący zmiany timeout 0. Same eventy nie pokrywają upływu czasu i wszystkich blokad. Zachowano wrappery onClear/startGameThread i dwa wrappery WidgetManager. wrap nie nadpisuje późniejszej zmiany metody przez inny dodatek podczas sprzątania.
 
-Poniższa tabela opisuje walidację liter A–Z dla zwykłej strony gry w docelowym środowisku Windows/Chromium/Edge. Dotyczy zdarzeń możliwych do anulowania i fokusu na grze. Jawny konflikt z drugim bindem, innym dodatkiem, wcześniejsze obsłużenie eventu albo nieaktywny stan funkcji może dodatkowo uniemożliwić użycie.
+Natywne okna, widget, ikony/animacje, tooltipy, użycie przedmiotu, DnD, scrollbar i szablony są już wykorzystywane. FormBuilder wprowadza inne wrappers/komponenty i wymagałby dodatkowej adaptacji układu oraz odrębnego zatwierdzania auto/bindów. Nie wprowadzono nowych klas ani biblioteki produkcyjnej.
 
-| Kombinacja | Dopuszczone litery |
-| --- | --- |
-| Ctrl + litera | **A B C D E F G H I J K L M O P Q R S U V X Y Z** — 23 kombinacje. |
-| Ctrl + Shift + litera | **A B C D E F G H I J L M O P Q R S U V X Y Z** — 22 kombinacje. |
+Item.update emituje afterUpdate po aktualizacji danych; zmiana loc/st może wymienić obiekt. Dlatego callbacki nadal są związane z obiektem, a sync odroczony. DisableItemsManager nakłada/usuwa ograniczenia dla wszystkich zarejestrowanych widoków. Pozostaje inicjalne sprawdzenie w syncIcon. Tooltip oglądanej ikony nadal jest odświeżany co sekundę przez istniejący tick.
 
-W szczególności działają Ctrl+B i Ctrl+K oraz Ctrl+Shift+B. Ctrl+Shift+C/I/J nie są już odrzucane na podstawie samego istnienia skrótu narzędzi przeglądarki; mogą zostać obsłużone, jeśli przeglądarka dostarcza anulowalne zdarzenie stronie. Ten sam warunek dotyczy Ctrl+F, Ctrl+L, Ctrl+R i pozostałych skrótów domyślnych przeglądarki.
+## Wielkość kodu i operacje
 
-Test przechodzi zapis i pojedyncze użycie wszystkich **45** dopuszczonych kombinacji, a nie tylko sprawdzenie własnej funkcji walidacji. Nie oznacza to, że wszystkie Ctrl+A–Z są dostępne lub że zadziałają przy fokusie na pasku adresu, w menu/systemie albo przy innym rozszerzeniu.
+| Miara core | 0.1.4 | 0.1.5 |
+|---|---:|---:|
+| Linie bez końcowej pustej linii | 1180 | 1179 |
+| Bajty UTF-8 przy LF, jak w Git | 65 106 | 64 798 |
+| Funkcje w składni, łącznie z callbackami/metodami | 242 | 240 |
+| Metody dwóch klas, wliczone wyżej | 70 | 70 |
+| Elementy obiektu TeleportQueue | 21 | 1 |
+| Nazwy obiektu eksportu / markera instancji | 1 / 1 | 1 / 1 |
+| Wrappery metod klienta w App | 5 | 4 |
 
-## Które pozostają zablokowane i dlaczego
+Funkcje policzono parserem Acorn jako FunctionDeclaration, FunctionExpression i ArrowFunctionExpression, a metody jako MethodDefinition. To nie liczba wystąpień słowa function ani wywołań. Core skrócono o 308 bajtów, około 0,47%. Jawne porównanie cache zajmuje linie, ale usuwa wielokrotnie wykonywaną pracę. Nie stosowano minifikacji ani upychania instrukcji.
 
-| Kombinacje literowe | Powód |
-| --- | --- |
-| Ctrl+N, Ctrl+Shift+N | Nowe zwykłe/prywatne okno; pozostawione pierwszeństwo przeglądarki. |
-| Ctrl+T, Ctrl+Shift+T | Nowa/przywracana karta; zarezerwowane polecenia Chromium. |
-| Ctrl+W, Ctrl+Shift+W | Zamknięcie karty/okna; dodatek nie próbuje ich przejmować. |
-| Ctrl+Shift+K | Zachowana **ostrożnościowa** blokada: Edge przypisuje temu duplikowanie karty. Nie potwierdzono niezawodnego przejmowania tego akceleratora w zwykłym oknie Edge. Nie deklarujemy, że jest technicznie niemożliwe w każdej przeglądarce; Ctrl+K jest odblokowane niezależnie. |
+Pomiar dotyczy **60 zajętych slotów**, po pierwszym odświeżeniu, bez zmiany przedmiotów, aktywnego automatu i hover. Dziesięć wywołań overlays odpowiada dziesięciu odświeżeniom zegara; nie jest czekaniem dziesięciu sekund. Liczniki opakowują App/ItemsManager i zapis tekstu .tp-cooldown bez zmiany ich wykonania.
 
-Poza literami nadal chronione są m.in. Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown i ich warianty Shift, Ctrl+F4, Ctrl+F5, Ctrl+Shift+Delete oraz systemowe Ctrl+Alt+Delete. Pozostawiono dotychczasowe ograniczenia Enter/Escape/Tab, strzałek, cyfr 1–9, klawiszy funkcyjnych i kombinacji Alt/Meta. F4 i PageUp/PageDown w zestawach Ctrl są jawnie ujęte jako zamykanie/przełączanie kart.
+| Operacja | 0.1.4 | 0.1.5 |
+|---|---:|---:|
+| syncIcon w 10 niezmienionych odświeżeniach | 600 | 0 |
+| Zapisy identycznego tekstu cooldownu w tych odświeżeniach | 600 | 0 |
+| Kontrole renderSlot w tych odświeżeniach | 600 | 600 |
+| Utworzone widoki w tych odświeżeniach | 0 | 0 |
+| updateNext w jednym widocznym render | 2 | 1 |
+| syncIcon w jednym sync | 120 | 60 |
+| syncIcon po changedSlots jednego miejsca | 61 | 1 |
+| Utworzone/usunięte widoki po changedSlots jednego miejsca | 1 / 1 | 1 / 1 |
+| Zapisy tekstu cooldownu po changedSlots jednego miejsca | 60 | 1 |
 
-Wykryty rzeczywisty konflikt, chroniona kombinacja lub zdarzenie z cancelable:false korzysta z niezmienionego komunikatu **Ten skrót jest już zajęty.** AltGr nie jest konfliktem zajętości — to kombinacja przeznaczona do pisania i w naszym oknie dostaje komunikat nieprawidłowej kombinacji.
+Już 0.1.4 nie odtwarzała niezmienionych ikon. Redukcja dotyczy pełnej synchronizacji, klonowania ilości/metadanych i mutacji DOM. Kontrole reprezentanta pozostają, bo koniec cooldownu może zmienić gotowy przedmiot w grupie. Przy rzeczywistej zmianie ekwipunku sync może odświeżyć wszystkie zajęte widoki raz; nie dodano osobnego rejestru brudnych przedmiotów.
 
-Źródła opisu funkcji przeglądarki/systemu: [skróty Edge](https://support.microsoft.com/en-us/edge/keyboard-shortcuts-in-microsoft-edge), [skróty Windows](https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec). Sam wpis na liście skrótów nie był używany jako dowód, że dany klawisz zawsze wyprzedza DOM; właśnie to rozróżnienie poprawia 0.1.4.
+Na obserwowany Item powstaje o jedno zamknięcie mniej. Usunięto jeden wrapper, callback adaptera i jego rejestrację cleanup. Cache dodaje najwyżej dwie wartości na widok: tekst i boolean, do 120 wartości przy 60 ikonach. Nie trafiają do profilu i są usuwane z Map. Nie mierzono sterty ani czasu CPU; liczniki nie oznaczają procentowego spadku całej pamięci/procesora.
 
-## Walidacja i wykonanie
+## Testy
 
-- systemKey porównuje **pełny zestaw modyfikatorów i code**. Doprecyzowano wyłącznie zestawy Ctrl/Ctrl+Shift; pozostała polityka pozostaje z 0.1.3.
-- registeredKey nadal czyta jawne wpisy Engine.hotKeys.hotKeys i getSortedHotKeys, np. Ctrl+K lub Control+KeyB. Nie utożsamia ich z K/B ani innym zestawem modyfikatorów. AltGraph nie jest porównywany jako Ctrl+Alt.
-- gameConflict rozróżnia chronione polecenie, pełną zajętą kombinację, bazowy niemodyfikowany klawisz gry i niezależny modyfikowany skrót. Używa KeyboardEvent.key do normalizacji, code do identyfikacji fizycznego klawisza oraz wszystkich flag modyfikatorów.
-- App.conflict jest wspólne przy zapisie i wykonaniu. Odmawia działania przy nieanulowalnym zdarzeniu; nie resetuje zapisanego binda po późniejszym konflikcie.
-- App.bind przejmuje wyłącznie dokładnie przypisaną i dozwoloną kombinację. Zatrzymuje keydown, keypress, repeat i końcowe keyup danego naciśnięcia, żeby nie uruchomić natywnego ruchu/hotkeya ani drugiej funkcji Teleportów. Stan zwalnia się po keyup, blur i zmianie widoczności.
-- Ręczny i automatyczny bind korzystają z tej samej identyfikacji. Ctrl+B i Ctrl+Shift+B mogą należeć do różnych funkcji. Włączenie automatu, pauza, wznowienie i STOP zachowują swoje wcześniejsze znaczenie.
-- Pisanie w input/textarea/MAGIC_INPUT/contenteditable, Engine.catchChar, blokady gry i wcześniejsze defaultPrevented mają pierwszeństwo. Nie przejmujemy wszystkich Ctrl w całym dokumencie ani bazowej litery niezależnie od modyfikatorów.
+| Etap | Node | Edge headless |
+|---|---:|---:|
+| Niezmienione 0.1.4 przed refaktoryzacją | 50/50 | 54/54 |
+| 0.1.5 z nowymi testami | 52/52 | 60/60 |
 
-Przeanalizowano ponownie oryginalny InputParser: Ctrl wyłącza ogólne HotKeys.checkKey w keyPressProcedure, lecz **nie** wyłącza ruchu rozpoznawanego w keyDown. Dlatego poza walidacją nadal konieczne jest zatrzymanie całego obsługiwanego naciśnięcia. Oryginalne HotKeys i InputParser są wykonywane w testach. Nie zmodyfikowano ich kodu, przypisań gry ani konfiguracji innych dodatków.
+Zachowano wcześniejsze regresje: cykl i wybór, auto/pauza/STOP, sukces/odmowa/timeout/późne odpowiedzi, mapy, śmierć/blokady, KC, grupy/import, duplikaty, DnD bez upuszczania na mapę, Ctrl+LPM, konfiguracja/profile, okna/rozmiary, scrollbar, widget, konflikty, 45 kombinacji Ctrl, repeat/keyup, pisanie i AltGr.
 
-Detekcja obcych dodatków pozostaje ograniczona do jawnych wpisów i wcześniej obsłużonego zdarzenia. Nie ma uniwersalnego rejestru listenerów Tampermonkey. Nie nadpisano EventTarget.prototype.addEventListener i nie usuwano cudzych handlerów.
+Dwa nowe testy Node sprawdzają nieinstrumentowany eksport produkcyjnego pliku i zgodność last. Rozszerzono istniejące testy loadera o brak usług GM w oknie gry i wspólny SHA zasobów.
 
-## AltGr i okno przypisywania
+Sześć nowych scenariuszy Edge sprawdza:
 
-AltGraph rozpoznawany jest przez getModifierState('AltGraph') i wartość key='AltGraph'. Stan zgłoszony podczas naciśnięcia prawego Alt jest pamiętany do jego keyup. Chroni to także sytuację, gdy przeglądarka zgłosi AltGraph na modyfikatorze, ale pominie go na kolejnej literze. Samo ctrlKey=true i altKey=true **nie** jest podstawą uznania kombinacji za AltGr.
+1. Brak pełnego syncIcon i zapisów niezmienionego cooldownu z zegara; jeden next i pomiar 60 slotów.
+2. Oryginalne Item.updadeViewAfterUpdateItem, ilość grupy, klasy jakości/low-value, tooltip/metadane, aktualizację przy ukrytym panelu bez wymiany ikony, następnie zmianę reprezentanta po cooldownie bez pozostawienia starego widoku.
+3. Dziesięć Item events połączonych w jeden sync, brak duplikacji callbacków, odpięcie wymienionego obiektu, brak mnożenia widoków po dwudziestu zamianach.
+4. Niezmienioną tożsamość checkTeleport, sukces z ITEM_USED bez reload i brak przesunięcia po odmowie.
+5. Usunięcie dziesięciu listenerów App, pięciu callbacków API i wszystkich czterech rodzajów timerów; brak zmiany zapisu po późnej odpowiedzi po destroy.
+6. Uruchomienie rzeczywistego nieinstrumentowanego core z jednym eksportem boot; jeden start, 60 slotów, handle tylko destroy oraz usunięcie markera/okien.
 
-keyOf dodaje tymczasowe altGraph:true tylko przy takim sygnale. sameKey nie utożsamia tej wartości z Ctrl+Alt. Zwykłe klucze v2 bez tej właściwości pozostają zgodne; brak flagi i false oznaczają to samo. Nie zmieniono schematu zapisu i nie dopisuje się tej flagi do poprawnego zapisanego binda.
+Oryginalne Item.on/unregisterCallback/trigger są wykonywane także w pozostałych scenariuszach. Metoda aktualizacji widoku jest wycinana z lokalnego klienta, bez kopiowania do produkcji; jej zależności statystyk/formatowania/enhancement i obiekty Item są kontrolowane. Pozostają oryginalne Window/WindowManager, ItemsManager, PointerDragDrop, AddScrollBar, API, InputParser/HotKeys i metoda sendUseRequest. WidgetManager i serwer są kontrolowane. To nie pełny zalogowany klient.
 
-Poza własnym oknem przechwytywania AltGr nie jest konsumowany przez Teleporty i nie wywołuje ręcznego ani automatycznego użycia. W polu edycji zdarzenia pozostają dostępne do wpisania znaków. Faktyczne Ctrl+Alt, jeżeli przeglądarka nie zgłasza AltGraph, nadal może być własnym skrótem.
+Porównanie operacji wykonano tym samym scenariuszem na niezmienionym core 0.1.4 i nowym core. Testy nie wysyłają użycia przedmiotów do Margonem. Źródła w E:\Kod margonem są wyłącznie odczytywane i nie są publikowane.
 
-W oknie „Ustaw skrót klawiszowy” AltGr również nie uruchamia gry ani dodatku. Podgląd pokazuje np. **AltGr + A**, a zapis takiej kombinacji jest odrzucany tekstem **Naciśnij poprawną kombinację klawiszy.** Nie zapisuje się jej błędnie jako Ctrl+Alt+A. Zwykły Ctrl+B pokazuje **Ctrl + B**. Poprawny zapis działa natychmiast i aktualizuje główny formularz. Anuluj zachowuje stary bind; Wyczyść pozostaje robocze do Zapisz.
+## Ocena loadera
 
-Niektóre przeglądarki, np. Firefox na Windows, mogą zgłaszać AltGraph również dla fizycznego Ctrl+Alt. W takiej sytuacji pierwszeństwo ma ochrona pisania — ta kombinacja nie uruchomi Teleportów. Nie próbujemy zgadywać na podstawie samych dwóch flag, czy użytkownik zamierzał wpisać znak. Źródło: [getModifierState i AltGraph](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/getModifierState).
+**Zachowano wariant A**: @require, @resource, GM_getResourceText/URL, GM_addStyle i unsafeWindow. Core dostaje okno NI i prywatny zapis przez zamknięte env. Nie udostępnia się GM w window/document. Nie zmieniono namespace, autora ani klucza postaci.
 
-## Wyniki
+Wariant B ze script.src/link.href nie usuwa oczekiwania na klienta ani obsługi ramek. Kontekst strony daje Engine, lecz nie prywatną pamięć GM. Zachowanie zapisu wymaga dodatkowego ograniczonego protokołu, gotowości i błędów; publiczny obiekt z GM jest niedopuszczalny, a localStorage zmieniłby model danych.
 
-**50/50 testów Node** i **54/54 scenariusze Edge headless**. Zachowano poprzednie regresje i dodano cztery testy logiki oraz pięć scenariuszy przeglądarkowych:
+Publiczne odpowiedzi raw GitHub dla JS/CSS 0.1.4 zwróciły HTTP 200, **Content-Type: text/plain; charset=utf-8**, **X-Content-Type-Options: nosniff**, **Access-Control-Allow-Origin: \***. To nie są odpowiednie typy do bezpośrednich script/style przy nosniff. CORS * nie naprawia MIME ani CSP. B wymagałby innego serwowania lub dodatkowego pobierania/wstrzykiwania. [MIME/nosniff](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/X-Content-Type-Options), [CSP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP).
 
-| Nowy scenariusz | Co potwierdza |
-| --- | --- |
-| Dostępne Ctrl+A–Z i Ctrl+Shift+A–Z | Rzeczywisty zapis i pojedyncze użycie 45 dopuszczonych kombinacji, brak akcji natywnej i ruchu, zwolnienie stanu, samo K osobno oraz odmowa Ctrl+W. |
-| Ctrl+B i Ctrl+Shift+B | Osobne ręczne użycie i automat; ręczny przycisk, przycisk auto, start/pauza/wznowienie/STOP, konflikt własny, brak repeat. |
-| Ctrl w edycji i na czacie | Input/textarea/MAGIC_INPUT/contenteditable, Ctrl+LPM bez teleportacji i odmowa działania przy cancelable:false. |
-| AltGr oraz Ctrl+Alt | Standardowe zdarzenia KeyboardEvent z modifierAltGraph, zapamiętanie AltGraph z prawego Alt, brak przejęcia klawiszy pisania, brak gry podczas przechwytywania, odrzucenie zapisu AltGr i działanie właściwego Ctrl+Alt+A po zwolnieniu. |
-| Zapis i ponowne logowanie | Natychmiastowe obowiązywanie binda, późniejszy zapis głównej konfiguracji, Anuluj, robocze i zatwierdzone Wyczyść, zachowanie całego profilu oraz działanie ręcznego i automatycznego Ctrl po odtworzeniu App. |
+A deleguje pobieranie zasobów Tampermonkey. Nie deklaruje się odporności na każdą politykę/konfigurację; dostęp między kontekstami, zwłaszcza w Firefox, wymaga osobnego sprawdzenia. Brak @noframes jest zachowany; dopasowane ramki mają własne okno i kontrolę gotowości, bez założenia top.Engine. Pełne porównanie dziewięciu aspektów i źródła Tampermonkey: [AUDIT.md](AUDIT.md). Nie wdrożono B ani dziennego cache-bustingu.
 
-Zdarzenia w scenariuszach Ctrl generuje Playwright na oryginalnych InputParser i HotKeys, z prawdziwymi Window i kontrolowanymi odpowiedziami gry. AltGraph jest sprawdzany standardowym konstruktorem KeyboardEvent z modifierAltGraph:true, a nie atrapą getModifierState. Wpisanie ąęłóśźżćń przez insertText dodatkowo sprawdza zachowanie pola; **nie jest to automatyzacja fizycznego AltGr na systemowej klawiaturze**.
+## Dane i skróty
 
-Nowe scenariusze uruchomiono także na niezmienionym core 0.1.3 z commita `f9d6a50e8ad16d146c381c2c2d94b4ef960c2152`. Cztery z pięciu bloków wykazały wady: odrzucanie dostępnych Ctrl, działanie przy zdarzeniu nieanulowalnym, pomylenie AltGr z Ctrl+Alt i niemożność ustawienia Ctrl+K do późniejszego odtworzenia. Scenariusz Ctrl+B/Ctrl+Shift+B przechodził już wcześniej i jest regresją. Kod wyjścia 1 w przebiegu starego wydania był oczekiwany.
+Schemat nadal wynosi **2**, klucz `margo-tp:v2:<world>:<characterId>`. Brak migracji/usuwania/resetu. Zachowane: sloty, grupy, blokady, kolejność, kolory, bindy, widgetPlaced i last. Aktywny zapis nadal wraca w pauzie. CSS i assets/widget.png są identyczne z 0.1.4. Nie zmieniono układu okien, widgetu ani mechaniki teleportacji.
 
-Pozostałe 49 scenariuszy obejmują użycie/odrzucenie, mapy, śmierć, KC, Ctrl+LPM, grupy, import, okna/rozmiary, przeciąganie, widget i sprzątanie. Nadal są to testy lokalne z kontrolowanym Engine, obiektami przedmiotów, widgetami i serwerem; nie potwierdzają teleportacji na rzeczywistym koncie. Pliki gry pozostają wyłącznie odczytywane poza repozytorium.
+Polityka Ctrl pozostaje z 0.1.4:
+
+| Kombinacja | Dopuszczone litery A–Z |
+|---|---|
+| Ctrl + litera | A B C D E F G H I J K L M O P Q R S U V X Y Z — 23. |
+| Ctrl + Shift + litera | A B C D E F G H I J L M O P Q R S U V X Y Z — 22. |
+
+Ctrl+N/T/W i Ctrl+Shift+N/T/W chronią nowe/przywracane/zamykane karty i okna. Ctrl+Shift+K pozostaje ostrożnościowo zablokowane przez duplikowanie karty w Edge, bez twierdzenia o niemożliwości przejęcia wszędzie. Zachowano m.in. Ctrl+Tab/Shift+Tab, Ctrl+PageUp/PageDown i warianty Shift, Ctrl+F4/F5, Ctrl+Shift+Delete, Ctrl+Alt+Delete oraz pozostałe ograniczenia klawiszy/Alt/Meta. [Edge](https://support.microsoft.com/en-us/edge/keyboard-shortcuts-in-microsoft-edge), [Windows](https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec).
+
+Dozwolony skrót wymaga anulowalnego zdarzenia, fokusu na grze, braku blokad i konfliktu. Własny drugi bind, jawny wpis obcego dodatku lub chroniony skrót pokazuje **Ten skrót jest już zajęty.** Prywatnych listenerów wszystkich dodatków nie można odczytać. AltGr pozostaje do pisania; samo ctrlKey+altKey nie oznacza AltGraph. Testy AltGr używają KeyboardEvent z modifierAltGraph i insertText, nie fizycznych klawiszy systemowych. Nie deklaruje się dostępności wszystkich Ctrl.
 
 ## Uruchamianie i publikacja
 
@@ -103,20 +122,8 @@ $env:TP_BROWSER_CHANNEL = 'msedge'
 node tests/browser.cjs
 ```
 
-Playwright musi być dostępny w Node. `TP_PROBE=ctrl` uruchamia tylko nowe scenariusze 0.1.4. `TP_PROBE=1` pozostawia osobne pięć scenariuszy 0.1.3. `TP_CORE_FILE` i `TP_CSS_FILE` pozwalają sprawdzić inne lokalne wersje do odtwarzania błędów. Bez tych zmiennych czytane są aktualne pliki projektu.
+Playwright musi być dostępny dla Node, np. przez NODE_PATH. TP_PROBE=audit wykonuje nowe sześć scenariuszy; TP_PROBE=metrics wypisuje liczniki; TP_METRICS_FILE opcjonalnie zapisuje JSON. TP_CORE_FILE pozwala porównać lokalny starszy core tym samym pomiarem. TP_PROBE=ctrl i TP_PROBE=1 izolują wcześniejsze regresje. Nieinstrumentowany scenariusz produkcyjnego API zawsze sprawdza bieżący plik projektu.
 
-Wydanie jest publikowane w main w dwóch etapach: najpierw core, testy i dokumentacja, następnie loader 0.1.4 przypięty do opublikowanego commita zasobów. Loader i każdy @require/@resource są weryfikowane przez HTTP i porównanie SHA-256 z lokalnym commitem Git. Ikona i CSS zachowują zawartość, ale otrzymują spójne adresy wydania 0.1.4. UpdateURL i downloadURL nadal wskazują aktualny loader na main. Bezpośredni link i SHA publikacji są podawane w odpowiedzi końcowej.
+Najpierw publikowane są core/testy/dokumentacja, następnie loader 0.1.5 przypięty do SHA zasobów. Trzy adresy mają ten sam SHA i ?v=0.1.5. UpdateURL/downloadURL pozostają na main. Po publikacji weryfikowane są HTTP 200 i SHA-256 względem Git, bez różnic CRLF kopii roboczej. SHA i bezpośredni link zostaną uzupełnione po wysłaniu.
 
-Commit zasobów: [`c9c9f41797794d8b2e20905004c929fbfc4d626e`](https://github.com/Doiua97/teleport-queue/commit/c9c9f41797794d8b2e20905004c929fbfc4d626e). Publiczne przypięte adresy core, CSS i ikony z `?v=0.1.4` zwróciły HTTP 200, a ich SHA-256 zgadzają się z lokalnym commitem. Zawartość CSS i ikony jest identyczna z 0.1.3. Loader 0.1.4 jest publikowany w osobnym końcowym commicie i wskazuje ten SHA zasobów.
-
-## Do sprawdzenia w zalogowanym Margonem
-
-Nie instalowano dodatku na rzeczywistej postaci i nie zmieniano prawdziwych przedmiotów.
-
-1. Zaktualizować Tampermonkey, odświeżyć NI i potwierdzić wersję 0.1.4 oraz zachowanie poprzednich ustawień v2.
-2. Ustawić Ctrl+B dla ręcznego użycia, Ctrl+Shift+B dla automatu, potem Ctrl+K. Sprawdzić fizyczną klawiaturę i brak jednoczesnego otwierania funkcji klienta/przeglądarki.
-3. Zweryfikować używane kombinacje w konkretnej przeglądarce, z normalnym fokusem na grze. Szczególnie Ctrl+K/L/R i Ctrl+Shift+C mogą zależeć od wydania, rozszerzeń, polityk i remapowania. Jeśli klawisz nie jest dostarczany stronie albo menu/system wymaga pierwszeństwa, wybrać inną kombinację — test headless nie daje gwarancji dla takiego środowiska.
-4. Wpisać polskie znaki przez rzeczywisty AltGr na czacie i w formularzu, także mając przypisane Ctrl+Alt+A. Nie powinno być użycia teleportu. W oknie przypisywania AltGr nie powinien zmienić go w zapisany Ctrl+Alt.
-5. Potwierdzić Ctrl+LPM, przytrzymanie, Anuluj/Wyczyść, ponowne logowanie oraz używane pozostałe dodatki. Prywatne bindy obcych dodatków nadal nie są w pełni wykrywalne.
-
-Nie deklarujemy dostępności wszystkich skrótów Ctrl ani pełnej zgodności z dowolnym systemem lub nieznanymi dodatkami.
+Nie instalowano dodatku na prawdziwej postaci. Po aktualizacji pozostaje próba w NI: zachowany profil, ilości po użyciu zwoju, koniec cooldownu, ukryty panel, tooltip, Ctrl/AltGr i rzeczywiste zmiany mapy. Lokalne testy potwierdzają objęte nimi ścieżki, nie odpowiedź zalogowanego serwera ani każdą konfigurację rozszerzeń.
