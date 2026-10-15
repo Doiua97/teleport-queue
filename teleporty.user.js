@@ -2,7 +2,7 @@
 // @name         Margonem NI — Teleporty
 // @namespace    https://github.com/Doiua97/teleport-queue
 // @version      0.1.6
-// @description  60 skrótów do teleportów, kolejka ręczna i tryb czasowy.
+// @description  Przeloty po e2 
 // @author       Doiua
 // @match        https://*.margonem.pl/*
 // @match        https://*.margonem.com/*
