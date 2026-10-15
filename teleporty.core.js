@@ -307,9 +307,11 @@
         }
     }
 
-    function wrap(object, key, around, cleanup) {
+    function wrap(object, key, around, cleanup, context) {
         const original = object[key];
-        const replacement = function (...args) { return around(original, this, args); };
+        const replacement = function (...args) {
+            return context() ? around(original, this, args) : original.apply(this, args);
+        };
         object[key] = replacement;
         cleanup.push(() => { if (object[key] === replacement) object[key] = original; });
     }
@@ -342,6 +344,7 @@
             this.altGraph = false;
             this.capture = null;
             this.syncTimer = null;
+            this.syncPending = false;
             this.operation = null;
             this.widgetSaving = false;
             this.dead = false;
@@ -421,7 +424,7 @@
                         if (this.context()) { this.sync(); this.q.ready(); }
                     });
                     return result;
-                }, this.clean);
+                }, this.clean, () => this.context());
             }
             const tick = this.win.setInterval(() => this.tick(), 1000);
             this.clean.push(() => this.win.clearInterval(tick));
@@ -471,11 +474,20 @@
             if (op?.response && matches(item, op.item)) op.accepted = true;
         }
         deferSync() {
-            if (this.dead || this.syncTimer !== null) return;
+            if (!this.context()) return;
+            this.syncPending = true;
+            if (this.syncTimer !== null) return;
             this.syncTimer = this.win.setTimeout(() => { this.syncTimer = null; this.sync(); }, 0);
         }
         sync() {
-            if (!this.context() || !this.loaded() || Object.keys(this.e.items.getFetchPackageController()).length) return;
+            if (!this.context()) return;
+            if (!this.loaded() || Object.keys(this.e.items.getFetchPackageController()).length) {
+                this.syncPending = true;
+                return;
+            }
+            this.syncPending = false;
+            if (this.syncTimer !== null) this.win.clearTimeout(this.syncTimer);
+            this.syncTimer = null;
             let changed = false;
             const live = new Set();
             for (const item of Object.values(this.e.heroEquipment.getHItems())) {
@@ -1031,11 +1043,13 @@
         widget() {
             const manager = this.e.widgetManager;
             const register = () => {
+                if (!this.context()) return;
                 const set = manager.getDefaultWidgetSet();
                 if (set && !set[WIDGET]) manager.addKeyToDefaultWidgetSet(WIDGET, 0, this.e.widgetsData.pos.TOP_LEFT,
                     'Teleporty', this.e.widgetsData.type.RED, () => this.togglePanel());
             };
             const decorate = () => {
+                if (!this.context()) return;
                 const widget = manager.getAttachWidgetByName(WIDGET)?.getWidget();
                 if (widget) {
                     widget.addClass('tp-widget');
@@ -1065,10 +1079,10 @@
             };
             wrap(manager, 'initDefaultWidgetSet', (original, receiver, args) => {
                 const result = original.apply(receiver, args); register(); return result;
-            }, this.clean);
+            }, this.clean, () => this.context());
             wrap(manager, 'addWidgetButtons', (original, receiver, args) => {
                 register(); const result = original.apply(receiver, args); decorate(); place(); return result;
-            }, this.clean);
+            }, this.clean, () => this.context());
             register();
             manager.addWidgetButtons();
             this.clean.push(() => {
@@ -1095,7 +1109,9 @@
             this.sync(); this.fit();
         }
         tick() {
+            if (this.dead) return;
             if (!this.context()) { this.env.restart(); return; }
+            if (this.syncPending) this.sync();
             if (this.p.state === 'active') {
                 const reason = this.blocked();
                 if (reason) this.q.pause(reason);
@@ -1111,6 +1127,8 @@
             this.dead = true;
             this.q.destroy();
             if (this.syncTimer !== null) this.win.clearTimeout(this.syncTimer);
+            this.syncTimer = null;
+            this.syncPending = false;
             for (const off of this.items.values()) off();
             for (const { item } of this.views.values()) this.e.items.deleteViewIconIfExist(item.id, VIEW);
             for (const cell of this.cells || []) { cell.pointerDroppable({ disabled: true }); cell.pointerDraggable('cancel'); cell.pointerDraggable('destroy'); }

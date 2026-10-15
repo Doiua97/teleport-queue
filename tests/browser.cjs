@@ -16,6 +16,7 @@ const useMethod = equipment.slice(equipment.indexOf('this.sendUseRequest = funct
     equipment.indexOf('this.callCheckCanFinishExternalTutorial ='));
 const itemSource = moduleCode('Item');
 const itemEvents = itemSource.slice(itemSource.indexOf('this.on = function'), itemSource.indexOf('this.beforeDelete = function'));
+const beforeDelete = itemSource.slice(itemSource.indexOf('this.beforeDelete = function'), itemSource.indexOf('this.updateCl = function'));
 const viewUpdate = itemSource.slice(itemSource.indexOf('this.updadeViewAfterUpdateItem ='), itemSource.indexOf('this.getUnbindCost ='));
 const templates = Object.fromEntries(['border-window', 'button', 'widget-button', 'item', 'input', 'ni-input-text',
     'checkbox-custom', 'c-color-picker', 'scrollbar-wrapper', 'crafting'].map(name => {
@@ -447,6 +448,319 @@ async function auditMetrics(page) {
     });
 }
 
+async function stabilizationRegressions(page, check) {
+    await page.evaluate(() => {
+        window.beginTimedOutAttempt = async (auto = true, slot) => {
+            const set = window.setTimeout;
+            let fire;
+            window.setTimeout = function (fn, delay, ...args) {
+                const id = set.call(this, fn, delay, ...args);
+                if (delay === 15000) fire = () => { clearTimeout(id); fn(...args); };
+                return id;
+            };
+            try {
+                responseType = 'delayed';
+                if (auto) app.p.config.auto = true;
+                const pending = auto ? app.q.toggle() : app.q.manual(slot);
+                const flight = app.q.flight, respond = reply;
+                if (!fire) throw new Error('Brak natywnego timeoutu operacji');
+                fire();
+                await pending;
+                return { flight, respond };
+            } finally { window.setTimeout = set; }
+        };
+    });
+    await check('0.1.6: zmiany podczas ładowania i kończący się później pakiet wracają w jednym sync', async () => {
+        const result = await page.evaluate(async () => {
+            const outcomes = [];
+            for (const visible of [true, false]) {
+                window.app?.destroy();
+                Engine.hero.d.id++;
+                app = new TeleportQueue.App(env).init();
+                const a = makeItem(5100, 'teleport=1;amount=3');
+                const b = makeItem(5101, 'teleport=1;amount=7');
+                app.p.slots[0] = { items: [{ id: a.id, hid: a.hid }, { id: b.id, hid: b.hid }] };
+                app.sync();
+                if (visible) app.panel.show(); else app.panel.hide();
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const snapshot = JSON.stringify(app.p.slots[0]);
+                const syncIcon = app.syncIcon;
+                let updates = 0;
+                app.syncIcon = function (...args) { updates++; return syncIcon.apply(this, args); };
+                Engine.onClear();
+                for (let i = 4; i <= 6; i++) { a.stat = 'teleport=1;amount=' + i; a.trigger('afterUpdate'); }
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const packet = Engine.items.addAndGetIdToFetchPackageController({ [a.id]: { loc: 'g' } });
+                Engine.startGameThread();
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const held = updates === 0 && JSON.stringify(app.p.slots[0]) === snapshot;
+                a.stat = 'teleport=1;amount=9';
+                a.trigger('afterUpdate');
+                await new Promise(resolve => setTimeout(resolve, 10));
+                Engine.items.decreaseFetchPackageController(packet, 'g');
+                app.tick(); app.tick(); app.tick();
+                outcomes.push({ visible, held, updates, amount: app.cells[0].find('.amount').text(),
+                    retained: JSON.stringify(app.p.slots[0]) === snapshot });
+                app.destroy();
+            }
+            return outcomes;
+        });
+        assert.deepEqual(result, [true, false].map(visible => ({ visible, held: true, updates: 1, amount: '16', retained: true })));
+    });
+    await check('0.1.6: spóźnione ITEM_USED zwalnia żądanie bez zmiany dotychczasowej pauzy i wskaźnika', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            const before = requests.length;
+            await beginTimedOutAttempt();
+            const blocked = app.p.state === 'paused' && app.p.next === 1 && Boolean(app.q.flight);
+            await app.q.toggle(); await app.q.manual();
+            responseType = 'success'; reply();
+            await Promise.resolve(); await Promise.resolve();
+            const next = app.p.next, last = app.p.last;
+            reply();
+            await Promise.resolve();
+            return { blocked, next, last, state: app.p.state, duplicate: app.p.next === next && app.p.last === last,
+                requests: requests.length - before, released: !app.q.flight, timer: app.q.timer };
+        });
+        assert.deepEqual(result, { blocked: true, next: 1, last: null, state: 'paused', duplicate: true, requests: 1, released: true, timer: null });
+    });
+    await check('0.1.6: wrappery zachowane przez inny dodatek są nieaktywne po destroy', async () => {
+        const result = await page.evaluate(async () => {
+            window.app?.destroy();
+            const specs = [[Engine, 'onClear'], [Engine, 'startGameThread'],
+                [Engine.widgetManager, 'initDefaultWidgetSet'], [Engine.widgetManager, 'addWidgetButtons']];
+            const original = specs.map(([owner, name]) => owner[name]);
+            const save = env.set, restart = env.restart;
+            const setTimeout = window.setTimeout, setInterval = window.setInterval;
+            const foreign = [], clientCalls = [], addonCalls = [];
+            let checking = false, forwarded = true;
+            try {
+                specs.forEach(([owner, name], i) => {
+                    owner[name] = function (...args) {
+                        clientCalls.push(name);
+                        if (checking) forwarded &&= this === owner && args[0] === name;
+                        original[i].apply(this, args);
+                        return name;
+                    };
+                });
+                Engine.hero.d.id++;
+                app = new TeleportQueue.App(env).init();
+                specs.forEach(([owner, name]) => {
+                    const wrapped = owner[name];
+                    const fn = function (...args) { addonCalls.push(name); return wrapped.apply(this, args); };
+                    foreign.push(fn); owner[name] = fn;
+                });
+                app.destroy();
+                let oldWaits = 0, writes = 0, timers = 0, restarts = 0;
+                app.q.wait = () => oldWaits++;
+                app.env.set = () => writes++;
+                env.restart = () => restarts++;
+                window.setTimeout = function (...args) { timers++; return setTimeout.apply(this, args); };
+                window.setInterval = function (...args) { timers++; return setInterval.apply(this, args); };
+                clientCalls.length = addonCalls.length = 0;
+                checking = true;
+                for (const [owner, name] of specs) forwarded &&= owner[name](name) === name;
+                app.tick(); app.deferSync();
+                await Promise.resolve();
+                return { clientCalls, addonCalls, oldWaits, writes, timers, restarts, forwarded,
+                    preserved: specs.every(([owner, name], i) => owner[name] === foreign[i]),
+                    registered: Boolean(Engine.widgetManager.getDefaultWidgetSet().tp_queue),
+                    windows: document.querySelectorAll('.tp-window').length };
+            } finally {
+                env.set = save; env.restart = restart; window.setTimeout = setTimeout; window.setInterval = setInterval;
+                specs.forEach(([owner, name], i) => { owner[name] = original[i]; });
+            }
+        });
+        const names = ['onClear', 'startGameThread', 'initDefaultWidgetSet', 'addWidgetButtons'];
+        assert.deepEqual(result, { clientCalls: names, addonCalls: names, oldWaits: 0, writes: 0, timers: 0, restarts: 0, forwarded: true,
+            preserved: true, registered: false, windows: 0 });
+    });
+    await check('0.1.6: wrapper nie rejestruje widgetu po zmianie kontekstu ani zamknięciu w oryginalnej metodzie', async () => {
+        const result = await page.evaluate(() => {
+            window.app?.destroy();
+            const manager = Engine.widgetManager, original = manager.initDefaultWidgetSet;
+            let close = false;
+            manager.initDefaultWidgetSet = function (...args) {
+                const result = original.apply(this, args);
+                if (close) app.destroy();
+                return result;
+            };
+            try {
+                Engine.hero.d.id++;
+                app = new TeleportQueue.App(env).init();
+                const id = Engine.hero.d.id;
+                Engine.hero.d.id++;
+                manager.initDefaultWidgetSet();
+                const stale = !manager.getDefaultWidgetSet().tp_queue;
+                Engine.hero.d.id = id;
+                close = true;
+                manager.initDefaultWidgetSet();
+                return { stale, closed: app.dead, absent: !manager.getDefaultWidgetSet().tp_queue,
+                    windows: document.querySelectorAll('.tp-window').length };
+            } finally { app.destroy(); manager.initDefaultWidgetSet = original; }
+        });
+        assert.deepEqual(result, { stale: true, closed: true, absent: true, windows: 0 });
+    });
+    await check('0.1.6: startGameThread wykonuje oczekujący sync raz i usuwa odroczony duplikat', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            const syncIcon = app.syncIcon;
+            let updates = 0;
+            app.syncIcon = function (...args) { updates++; return syncIcon.apply(this, args); };
+            Engine.onClear();
+            hItems['2001'].stat = 'teleport=1;amount=12';
+            hItems['2001'].trigger('afterUpdate');
+            Engine.startGameThread();
+            await new Promise(resolve => setTimeout(resolve, 10));
+            app.tick(); app.tick();
+            return { updates, amount: app.cells[0].find('.amount').text(), pending: app.syncPending, timer: app.syncTimer };
+        });
+        assert.deepEqual(result, { updates: 6, amount: '12', pending: false, timer: null });
+    });
+    await check('0.1.6: natywne updateItem/deleteItem zachowuje skrót w przerwie i sprawdza hid po odtworzeniu', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            const original = { newItem: Engine.items.newItem, cfg: window.CFG, sticky: Engine.stickyTips, marks: Engine.itemsMarkManager };
+            window.CFG = { ...window.CFG, enhancedItemId: null };
+            Engine.stickyTips = { deleteIfExist() {} }; Engine.itemsMarkManager = { removeItem() {} };
+            let recreate;
+            Engine.items.newItem = function (id, data, packet) {
+                recreate = () => {
+                    const replacement = makeItem(id, data.stat);
+                    Object.assign(replacement, data);
+                    this.newItemInLocation('g', replacement, packet);
+                };
+            };
+            try {
+                let retained = true, safe = true;
+                for (const hid of ['h2001', 'different-hid']) {
+                    const old = hItems['2001'];
+                    old.on('delete', () => { delete hItems[old.id]; });
+                    const snapshot = JSON.stringify(app.p.slots[0]);
+                    const packet = Engine.items.addAndGetIdToFetchPackageController({ [old.id]: { loc: 'g' } });
+                    Engine.onClear(); Engine.startGameThread();
+                    Engine.items.updateItem(old.id, { loc: 'g', st: old.st + 1, hid, stat: 'teleport=1;amount=8' }, packet);
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                    app.sync(); app.tick();
+                    safe &&= JSON.stringify(app.p.slots[0]) === snapshot;
+                    recreate();
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                    app.tick();
+                    if (hid === 'h2001') retained &&= app.views.get(0).item === hItems['2001']
+                        && app.cells[0].find('.amount').text() === '8' && JSON.stringify(app.p.slots[0]) === snapshot
+                        && old.events.afterUpdate.length === 0;
+                }
+                return { safe, retained, rejectsWrongHid: app.p.slots[0] === null, otherSlots: app.p.slots.filter(Boolean).length === 5 };
+            } finally {
+                Engine.items.newItem = original.newItem;
+                window.CFG = original.cfg; Engine.stickyTips = original.sticky; Engine.itemsMarkManager = original.marks;
+            }
+        });
+        assert.deepEqual(result, { safe: true, retained: true, rejectsWrongHid: true, otherSlots: true });
+    });
+    await check('0.1.6: odpowiedź przed timeoutem działa dotychczasowo, brak odpowiedzi utrzymuje blokadę', async () => {
+        await resetCase(page);
+        const result = await page.evaluate(async () => {
+            app.p.config.auto = true; responseType = 'success';
+            await app.q.toggle();
+            const success = app.p.next === 2 && app.p.state === 'active' && app.q.timer !== null;
+            app.q.stop(); responseType = 'rejected';
+            await app.q.toggle();
+            const rejected = app.p.next === 1 && app.p.state === 'paused' && !app.q.flight;
+            app.q.stop();
+            await beginTimedOutAttempt();
+            const before = requests.length;
+            for (let i = 0; i < 5; i++) { app.tick(); await app.q.toggle(); await app.q.manual(); }
+            return { success, rejected, held: Boolean(app.q.flight) && requests.length === before
+                && app.p.next === 1 && app.p.state === 'paused' && app.q.timer === null };
+        });
+        assert.deepEqual(result, { success: true, rejected: true, held: true });
+    });
+    await check('0.1.6: późna odmowa i nieskorelowane id/hid nie są sukcesem', async () => {
+        for (const kind of ['rejected', 'id', 'hid']) {
+            await resetCase(page);
+            const result = await page.evaluate(async kind => {
+                const { respond } = await beginTimedOutAttempt();
+                const call = API.callEvent;
+                API.callEvent = function (name, data) {
+                    if (name === Engine.apiData.ITEM_USED && kind !== 'rejected') {
+                        data = { ...data, [kind]: 'unrelated' };
+                    }
+                    return call.call(this, name, data);
+                };
+                try {
+                    responseType = kind === 'rejected' ? 'rejected' : 'success';
+                    respond(); await Promise.resolve();
+                    return { next: app.p.next, last: app.p.last, state: app.p.state, released: !app.q.flight, timer: app.q.timer };
+                } finally { API.callEvent = call; }
+            }, kind);
+            assert.deepEqual(result, { next: 1, last: null, state: 'paused', released: true, timer: null }, kind);
+        }
+    });
+    await check('0.1.6: późna odpowiedź po zmianie kontekstu pozostawia zapis jak w 0.1.5', async () => {
+        for (const kind of ['stop', 'start', 'character', 'world', 'destroy', 'assign', 'remove', 'swap', 'interval']) {
+            await resetCase(page);
+            const result = await page.evaluate(async kind => {
+                const { respond } = await beginTimedOutAttempt();
+                const world = Engine.worldConfig.getWorldName, set = env.set;
+                try {
+                    if (kind === 'stop') app.q.stop();
+                    if (kind === 'start') app.q.setStart(12);
+                    if (kind === 'character') Engine.hero.d.id++;
+                    if (kind === 'world') Engine.worldConfig.getWorldName = () => 'another-world';
+                    if (kind === 'destroy') app.destroy();
+                    if (kind === 'assign') app.assign(0, makeItem(6100));
+                    if (kind === 'remove') app.remove(0);
+                    if (kind === 'swap') app.swap(0, 1);
+                    if (kind === 'interval') { app.openConfig(); app.fields.interval.val(121); app.saveConfig(); }
+                    const saved = JSON.stringify(app.p), before = requests.length;
+                    let writes = 0;
+                    env.set = (...args) => { writes++; return set(...args); };
+                    responseType = 'success'; respond(); await Promise.resolve(); await Promise.resolve();
+                    return { unchanged: JSON.stringify(app.p) === saved, released: !app.q.flight,
+                        requests: requests.length - before, writes, timer: app.q.timer };
+                } finally { Engine.worldConfig.getWorldName = world; env.set = set; }
+            }, kind);
+            assert.deepEqual(result, { unchanged: true, released: true, requests: 0, writes: 0, timer: null }, kind);
+        }
+    });
+    await check('0.1.6: zużycie ostatniego zwoju lub członka grupy nie zmienia dotychczasowej obsługi timeoutu', async () => {
+        for (const grouped of [false, true]) {
+            await resetCase(page);
+            const result = await page.evaluate(async grouped => {
+                if (grouped) {
+                    const second = makeItem(6200, 'teleport=1;amount=7');
+                    app.p.slots[0].items.push({ id: second.id, hid: second.hid }); app.sync();
+                }
+                const { respond, flight } = await beginTimedOutAttempt();
+                const consumed = hItems['2001'];
+                consumed.trigger('delete');
+                delete hItems[consumed.id]; Engine.items.deleteItem(consumed.id, false);
+                await new Promise(resolve => setTimeout(resolve, 10));
+                const cleaned = grouped ? app.p.slots[0].items.length === 1 : app.p.slots[0] === null;
+                responseType = 'success'; respond(); await Promise.resolve();
+                return { cleaned, identity: flight.item, next: app.p.next, last: app.p.last,
+                    state: app.p.state, released: !app.q.flight, timer: app.q.timer };
+            }, grouped);
+            assert.deepEqual(result, { cleaned: true, identity: { id: '2001', hid: 'h2001' }, next: 1, last: null,
+                state: 'paused', released: true, timer: null });
+        }
+    });
+    await check('0.1.6: KC bez celu przed i po timeoutcie zachowuje slot, także przy ręcznej próbie', async () => {
+        for (const auto of [true, false]) {
+            await resetCase(page);
+            const result = await page.evaluate(async auto => {
+                const kc = makeItem(6300, 'custom_teleport='); app.assign(0, kc);
+                const { respond } = await beginTimedOutAttempt(auto, 1);
+                responseType = 'success'; respond(); await Promise.resolve();
+                return { next: app.p.next, last: app.p.last, state: app.p.state, released: !app.q.flight, timer: app.q.timer };
+            }, auto);
+            assert.deepEqual(result, { next: 1, last: null, state: auto ? 'paused' : 'off', released: true, timer: null });
+        }
+    });
+}
+
 async function auditRegressions(page, check) {
     await check('0.1.5: niezmienione ikony nie są synchronizowane z zegara; jeden wybór na render', async () => {
         const metrics = await auditMetrics(page);
@@ -686,6 +1000,7 @@ async function auditRegressions(page, check) {
             const server = { existing: [0, 'top-left'] };
             window.fullBars = false;
             window.Engine = {
+                stickyTips: { deleteIfExist() {} }, itemsMarkManager: { removeItem() {} },
                 hotKeys: { hotKeys: {}, getSortedHotKeys: () => [], getKeyByClbName: () => '' },
                 map: { lock: { list: [], check() { return this.list; } }, getDrawable() { return this.drawable; }, getUnlock() { return this.unlock; }, drawable: true, unlock: true },
                 onClear() { this.allInit = false; this.reload = true; this.map.drawable = false; this.map.unlock = false; this.map.lock.list = ['game_init']; this.lock.add('mapLoadedAndAllInit'); },
@@ -758,7 +1073,7 @@ async function auditRegressions(page, check) {
         await page.addScriptTag({ content: `
             window.installItemEvents = function (item) {
                 item.events = {};
-                (function () { ${itemEvents} }).call(item);
+                (function () { ${itemEvents} ${beforeDelete} }).call(item);
             };
             window.installNativeViewUpdate = function (item) {
                 const self = item;
@@ -829,7 +1144,7 @@ async function auditRegressions(page, check) {
         if (process.env.TP_PROBE) {
             await initNativeKeys(page);
             const failures = [];
-            const run = process.env.TP_PROBE === 'audit' ? auditRegressions : process.env.TP_PROBE === 'ctrl' ? ctrlRegressions : regressions;
+            const run = process.env.TP_PROBE === 'stable' ? stabilizationRegressions : process.env.TP_PROBE === 'audit' ? auditRegressions : process.env.TP_PROBE === 'ctrl' ? ctrlRegressions : regressions;
             await run(page, async (name, fn) => {
                 try { await fn(); console.log('PASS ' + name); } catch (error) { failures.push(name); console.log('FAIL ' + name + ': ' + error.message); }
             });
@@ -1466,6 +1781,7 @@ async function auditRegressions(page, check) {
         });
         await regressions(page, check);
         await ctrlRegressions(page, check);
+        await stabilizationRegressions(page, check);
         await auditRegressions(page, check);
         assert.deepEqual(errors, []);
         console.log(`Browser: ${checks.length} checks passed; native Window, ItemsManager, PointerDragDrop and API; controlled game/server fixture.`);
